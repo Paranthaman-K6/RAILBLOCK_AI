@@ -99,6 +99,4 @@ def diagnostics():
         "cursor_summary": cursor_summary,
     }
 
-@router.get("/")
-def root():
-    return {"message":"RailBlock AI - Human-approved planning prototype","health":"/health","docs":"/docs"}
+
