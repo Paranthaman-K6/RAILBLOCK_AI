@@ -14,17 +14,38 @@ def _normalize_postgres_url(url: str) -> str:
         return "postgresql://" + url[len("postgres://"):]
     return url
 
+def _sanitize_postgres_url(url: str) -> str:
+    # Strip Supabase UI hints that are not libpq/psycopg2 DSN keys (e.g. &pgbouncer=true, &prepareThreshold=0)
+    # pgbouncer param is valid for psycopg3/postgres.js/Prisma but invalid for psycopg2 libpq -> invalid dsn
+    if "pgbouncer" not in url and "prepareThreshold" not in url and "pgsession" not in url:
+        return url
+    try:
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        p = urlparse(url)
+        q = parse_qs(p.query, keep_blank_values=True)
+        for bad in list(q.keys()):
+            if bad.lower() in ("pgbouncer", "preparethreshold", "preparedthreshold", "pgsession", "statement_cache_size"):
+                q.pop(bad, None)
+        new_q = urlencode({k: v[0] if len(v)==1 else v for k,v in q.items()}, doseq=False)
+        return urlunparse((p.scheme, p.netloc, p.path, p.params, new_q, p.fragment))
+    except Exception:
+        return url
+
 def _is_postgres_url(url: Optional[str] = None) -> bool:
     u = url or DATABASE_URL or ""
     return u.startswith("postgresql")
 
 # Always use absolute Windows path when running locally, but allow DATABASE_URL override for Docker (/app/railblock.db)
 # For Docker, DATABASE_URL=sqlite:///./railblock.db will be resolved relative to WORKDIR /app -> /app/railblock.db
-DATABASE_URL = _normalize_postgres_url(os.getenv("DATABASE_URL", f"sqlite:///{_default_db.replace(os.sep, '/')}"))
+DATABASE_URL = _sanitize_postgres_url(_normalize_postgres_url(os.getenv("DATABASE_URL", f"sqlite:///{_default_db.replace(os.sep, '/')}")))
 # Ensure sslmode for Supabase/Render external Postgres (append if missing and is postgres)
 if _is_postgres_url(DATABASE_URL) and "sslmode=" not in DATABASE_URL:
     sep = "&" if "?" in DATABASE_URL else "?"
     DATABASE_URL = DATABASE_URL + f"{sep}sslmode=require"
+# Add connect_timeout for faster failover on Render (pooled 6543) if not present
+if _is_postgres_url(DATABASE_URL) and "connect_timeout" not in DATABASE_URL:
+    sep = "&" if "?" in DATABASE_URL else "?"
+    DATABASE_URL = DATABASE_URL + f"{sep}connect_timeout=5"
 
 def is_postgres() -> bool:
     # Explicit DATABASE_MODE flag takes precedence; fallback to URL scheme
@@ -108,10 +129,13 @@ def get_engine():
             # If want_pg but url still sqlite, keep original engine but diagnostics will warn
             if want_pg and new_url.startswith("sqlite"):
                 return engine
-            new_url = _normalize_postgres_url(new_url)
+            new_url = _sanitize_postgres_url(_normalize_postgres_url(new_url))
             if want_pg and "sslmode=" not in new_url:
                 sep = "&" if "?" in new_url else "?"
                 new_url = new_url + f"{sep}sslmode=require"
+            if want_pg and "connect_timeout" not in new_url:
+                sep = "&" if "?" in new_url else "?"
+                new_url = new_url + f"{sep}connect_timeout=5"
             engine = _ce(
                 new_url,
                 connect_args={"check_same_thread": False} if "sqlite" in new_url and not want_pg else {},
