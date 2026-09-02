@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: railblock-ai
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MODE
+        value: postgres

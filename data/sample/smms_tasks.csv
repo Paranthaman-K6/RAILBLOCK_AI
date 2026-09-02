@@ -1,0 +1,9 @@
+task_id,corridor_id,section_id,line_id,asset_id,task_type,description,severity,safety_score,urgency_score,asset_criticality,operational_impact,overdue_days,coordination_value,resource_readiness,estimated_duration_minutes,setup_duration_minutes,required_block_type,requires_traffic_block,requires_power_isolation,requires_signal_disconnection,earliest_start,deadline,dependency_task_ids,required_resource_ids,department
+TSK-002,COR-1,SEC-1,LIN-2,AST-2,POINT_MAINT,POINT_MAINT at SEC-1 KM 22.5 MEDIUM,MEDIUM,82,82,88,60,0,55,53,45,30,TRAFFIC,true,false,false,2026-09-01,2026-09-20,,RES-7;RES-8,S_AND_T
+TSK-006,COR-2,SEC-3,LIN-5,AST-6,INTERLOCKING,INTERLOCKING at SEC-3 KM 60.0 HIGH,HIGH,39,21,90,59,5,66,56,30,15,TRAFFIC,true,false,true,2026-09-03,2026-09-16,,RES-1,S_AND_T
+TSK-010,COR-1,SEC-1,LIN-1,AST-1,INTERLOCKING,INTERLOCKING at SEC-1 KM 150.0 LOW,LOW,44,29,77,90,12,39,84,30,20,TRAFFIC,true,false,false,2026-09-03,2026-09-25,,RES-7,S_AND_T
+TSK-014,COR-1,SEC-1,LIN-2,AST-2,POINT_MAINT,POINT_MAINT at SEC-1 KM 22.5 CRITICAL,CRITICAL,72,55,88,85,0,79,67,60,30,TRAFFIC,true,false,false,2026-09-03,2026-09-25,,RES-6;RES-8,S_AND_T
+TSK-018,COR-2,SEC-3,LIN-5,AST-6,INTERLOCKING,INTERLOCKING at SEC-3 KM 60.0 MEDIUM,MEDIUM,68,71,90,65,20,30,69,60,15,TRAFFIC,true,false,true,2026-09-02,2026-09-26,,RES-1,S_AND_T
+TSK-022,COR-3,SEC-5,LIN-7,AST-10,SIGNAL_TEST,SIGNAL_TEST at SEC-5 KM 150.0 CRITICAL,CRITICAL,47,79,77,72,5,65,88,60,30,TRAFFIC,true,false,false,2026-09-03,2026-09-24,,RES-8;RES-7,S_AND_T
+TSK-026,COR-1,SEC-1,LIN-2,AST-2,CABLE_CHECK,CABLE_CHECK at SEC-1 KM 22.5 HIGH,HIGH,79,73,88,64,12,77,84,120,15,TRAFFIC,true,false,false,2026-09-02,2026-09-15,,RES-7;RES-8,S_AND_T
+TSK-030,COR-1,SEC-1,LIN-1,AST-1,POINT_MAINT,POINT_MAINT at SEC-1 KM 60.0 LOW,LOW,49,50,90,38,2,72,57,120,15,TRAFFIC,true,false,true,2026-09-02,2026-09-16,,RES-1,S_AND_T

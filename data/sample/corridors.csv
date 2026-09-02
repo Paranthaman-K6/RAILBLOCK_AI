@@ -1,0 +1,13 @@
+corridor_id,corridor_name,section_id,section_name,line_id,line_type,asset_id,asset_type
+COR-1,Delhi-Howrah,SEC-1,Ghaziabad - Tundla,LIN-1,UP,AST-1,TRACK
+COR-1,Delhi-Howrah,SEC-1,Ghaziabad - Tundla,LIN-2,DOWN,AST-2,OHE
+COR-1,Delhi-Howrah,SEC-2,Tundla - Kanpur,LIN-3,UP,AST-3,SIGNAL
+COR-1,Delhi-Howrah,SEC-2,Tundla - Kanpur,LIN-4,DOWN,AST-4,TRACK
+COR-2,Mumbai-Chennai,SEC-3,Kalyan - Pune,LIN-5,SINGLE,AST-5,TRACK
+COR-2,Mumbai-Chennai,SEC-3,Kalyan - Pune,LIN-5,SINGLE,AST-6,BRIDGE
+COR-2,Mumbai-Chennai,SEC-4,Pune - Solapur,LIN-6,LOOP,AST-7,OHE
+COR-2,Mumbai-Chennai,SEC-4,Pune - Solapur,LIN-6,LOOP,AST-8,SIGNAL
+COR-3,Howrah-Chennai,SEC-5,Vijayawada - Chennai,LIN-7,UP,AST-9,TRACK
+COR-3,Howrah-Chennai,SEC-5,Vijayawada - Chennai,LIN-7,UP,AST-10,OHE
+COR-3,Howrah-Chennai,SEC-6,Kharagpur - Bhubaneswar,LIN-8,DOWN,AST-11,TRACK
+COR-3,Howrah-Chennai,SEC-6,Kharagpur - Bhubaneswar,LIN-8,DOWN,AST-12,SIGNAL

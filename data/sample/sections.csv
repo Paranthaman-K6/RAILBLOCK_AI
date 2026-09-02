@@ -1,0 +1,7 @@
+corridor_id,section_id,section_name,from_km,to_km
+COR-1,SEC-1,Ghaziabad - Tundla,0,120
+COR-1,SEC-2,Tundla - Kanpur,120,320
+COR-2,SEC-3,Kalyan - Pune,0,150
+COR-2,SEC-4,Pune - Solapur,150,350
+COR-3,SEC-5,Vijayawada - Chennai,0,400
+COR-3,SEC-6,Kharagpur - Bhubaneswar,400,700

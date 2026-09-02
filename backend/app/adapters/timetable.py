@@ -1,0 +1,2 @@
+from .tms import TimetableAdapter
+

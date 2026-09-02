@@ -1,0 +1,42 @@
+{
+  "title": "RailBlock AI — User Journey & Workflow (v1.0.1-prototype)",
+  "prototype_disclaimer": "Synthetic demo data only. Not autonomous control. Synthetic prototype windows, not official railway availability.",
+  "horizon": "2026-09-01 to 2026-09-30 (WEEKLY 01-07, MONTHLY 01-30, DAILY single)",
+  "stack": "React 18 + Vite + React Router + FastAPI + Pydantic + SQLAlchemy + SQLite WAL + OR-Tools CP-SAT + Recharts",
+  "roles": [
+    {"id": "CONTROL_OFFICE", "can_approve": true, "can_execute_all": true},
+    {"id": "ADMIN", "can_approve": true},
+    {"id": "ENGINEERING", "source": "TMS", "can_execute_own": true},
+    {"id": "S_AND_T", "source": "SMMS"},
+    {"id": "TRACTION", "source": "TDMS"},
+    {"id": "PROJECTS", "source": "COA"},
+    {"id": "VIEWER", "can_approve": false}
+  ],
+  "steps": [
+    {"id": 1, "page": "Dashboard", "route": "/", "api": "GET /health, GET /api/tasks, GET /api/windows", "ui": "Synthetic banner, Tasks 30 Windows 134 feasible, health wal"},
+    {"id": 2, "page": "Import", "route": "/import", "api": "POST /api/import/tasks (tms/smms/tdms) + corridors/trains/goods/resources, GET /api/import/summary", "validation": "MISSING_COLUMN/UNKNOWN_CORRIDOR 11 errors, duplicate 15 idempotent"},
+    {"id": 3, "page": "TaskInbox", "route": "/tasks", "api": "GET /api/tasks?limit=100, GET /api/tasks/{id}/priority-explanation", "fields": "priority_score, rank, band, S,U,C,O,D,R, P=0.30S+0.20U+0.20C+0.15O+0.10D+0.05R + historical Δ"},
+    {"id": 4, "page": "Planner", "route": "/planner", "api": "POST /api/plans/generate {WEEKLY}, GET /api/windows, POST /api/windows/generate", "templates": "01:00-03:00, 13:30-15:30, 02:00-06:00 max240, Asia/Kolkata"},
+    {"id": 5, "action": "Candidate Windows", "engine": "generate_candidate_windows", "bulk": "train_map, goods_map, existing_map", "status": "FEASIBLE 134 / REJECTED 34 Train overlap / Goods ≥0.7 HARD"},
+    {"id": 6, "conflict": "Protected interval [departure-buffer, arrival+buffer) overlap=train_start<block_end && train_end>block_start, exact boundary no overlap"},
+    {"id": 7, "grouping": "MAX_GROUP_SIZE 3, 9 checks corridor/section/line/date/type/power/signal/resources/dependencies, duration≤240, generate_candidate_groups 100 max"},
+    {"id": 8, "optimization": "Baseline FCFS (no grouping) vs CP-SAT x[tid,wid] y[gid,wid] task≤1 window≤1 resource/date dependency ordering 5s 8 workers → OPTIMAL, fallback greedy"},
+    {"id": 9, "validation": "14 checks A-L + grouping, POST /api/plans/{id}/validate → valid:true else violations 400"},
+    {"id": 10, "editing": "PATCH /api/plans/{id}/draft-blocks/{blk} {service_date, reason, editor} → 200 else 400 TRAIN/RESOURCE, 409 stale expected_version, AuditEvent old/new"},
+    {"id": 11, "approval": "POST /api/plans/{id}/submit-review DRAFT→UNDER_REVIEW 200 else 400, POST .../approve {CONTROL_OFFICE} → 200 APPROVED else 401/403, VIEWER 403, AuditEvent+Notification"},
+    {"id": 12, "department_view": "GET /api/approved-plans?department=ENGINEERING, GET /api/plans/{id}/department-view?department=TRACTION → my_blocks 7/5/6 integrated 13/15/14, CONTROL_OFFICE 0/20, no leak"},
+    {"id": 13, "execution": "POST /api/blocks/{BLK-*}/execution {actual_start, actual_end, status, completed_task_ids, service_date, recorded_by} → 201 else 200 idempotent / 409 diff / 400 WND / 404 unknown / 422 malformed, no 500, EXE-* + Block/Task statuses"},
+    {"id": 14, "replanning": "POST /api/plans/{id}/replan {reason} → new_plan_id preserved 19 displaced 2 new TSK-2000, Execution history preserved, 409 stale"},
+    {"id": 15, "metrics": "GET /api/metrics/{id} → blocks, asset_downtime/available/availability_pct, completion_rate, planned/actual/variance, baseline/optimized/improvement, formulas documented"},
+    {"id": 16, "export": "GET /api/plans/{id}/export?format=csv → 200 text/csv contains PLAN-*, ?format=pdf → 200"}
+  ],
+  "state_machines": {
+    "plan": "DRAFT → UNDER_REVIEW → APPROVED → PUBLISHED → SUPERSEDED, REJECTED",
+    "block": "GENERATED → UNDER_REVIEW → APPROVED → PUBLISHED → COMPLETED/PARTIALLY_COMPLETED/CANCELLED → LOCKED",
+    "task": "PENDING → ELIGIBLE → SCHEDULED → LOCKED → COMPLETED"
+  },
+  "api_count": 54,
+  "entities": 27,
+  "tests": "62 passed, lint 0, build 907 modules",
+  "deployment": "D:/PROJECT2/MAYBE/RAIL/backend/railblock.db WAL, ./start.ps1 / bash start.sh [clean|health|status|logs|stop], docker-compose.yml healthcheck python -c urllib, CI setup-python 3.11 + pytest + setup-node 20 + eslint + tsc + build"
+}

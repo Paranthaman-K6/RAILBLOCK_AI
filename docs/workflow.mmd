@@ -1,0 +1,87 @@
+%% RailBlock AI — Complete Workflow (Mermaid) — v1.0.1-prototype, 2026-09-01
+%% 18 services, 27 entities, 7+1 sources, 3 horizons, human-approved
+graph TD
+    %% Phase 0
+    A[START<br/>Select Horizon<br/>WEEKLY 01-07<br/>MONTHLY 01-30<br/>DAILY single] --> B[Import 7+1 Sources<br/>TMS→ENG<br/>SMMS→S&T<br/>TDMS→TRACTION<br/>COA→Assets<br/>Timetable<br/>Goods Forecast<br/>Resources<br/>+ Historical Execution]
+
+    %% Phase 1
+    B --> C[Adapters<br/>expected_columns<br/>load/normalize/validate/to_canonical]
+    C --> D{Structural Validation<br/>Header/Field}
+    D -->|FAIL MISSING_COLUMN| D1[ImportRun rejected<br/>row,field,severity,code,message<br/>UNKNOWN_CORRIDOR]
+    D -->|PASS| E[Normalize<br/>IDs/departments/locations/dates]
+    E --> F{Referential<br/>corridor/asset/resource/dependency exists?}
+    F -->|NO| F1[UNKNOWN_ASSET etc rejected]
+    F -->|YES| G{Operational<br/>durations/deadlines/block types/isolation}
+    G -->|NO| G1[INVALID_DURATION rejected]
+    G -->|YES| H{Duplicate<br/>composite keys}
+    H -->|YES duplicate| H1[duplicate_count deterministic<br/>second import duplicate 15]
+    H -->|NO| I[Persist Transactionally<br/>savepoints per record<br/>cached sets bulk no N+1<br/>ImportRun + AuditEvent]
+
+    %% Phase 2
+    I --> J[Asset & Corridor Mapping<br/>COR-*/SEC-*/LIN-*/AST-*]
+    J --> K[Priority Engine<br/>P=0.30S+0.20U+0.20C+0.15O+0.10D+0.05R<br/>+ historical Δ +8/-2<br/>RuleConfiguration versioned]
+    K --> L[Candidate Windows<br/>Templates 01:00-03:00<br/>13:30-15:30<br/>02:00-06:00<br/>max240 Asia/Kolkata<br/>bulk train_map/goods_map/existing_map]
+
+    %% Phase 3
+    L --> M{Check Each Task-Window<br/>check_task_window_fit}
+    M -->|corridor/section/line mismatch| M1[HARD_CONFLICT]
+    M -->|block_type/power/signal mismatch| M1
+    M -->|needed > available| M1
+    M -->|window REJECTED| M1
+    M -->|goods_risk ≥70| M1
+    M -->|goods_risk ≥40| M2[SOFT_RISK]
+    M -->|Train protected<br/>[departure-buffer, arrival+buffer)<br/>overlap=train_start<block_end && train_end>block_start| M1
+    M -->|PASS| N[FEASIBLE<br/>expected_train_count<br/>goods_risk_score<br/>REJECTED otherwise]
+
+    %% Phase 4
+    N --> O[Compatibility & Grouping<br/>MAX_GROUP_SIZE 3<br/>same corridor/section/line/date/type/power/signal/resources/dependencies<br/>duration≤240]
+    O --> P[Baseline FCFS<br/>priority DESC, first feasible<br/>no grouping]
+    O --> Q[CP-SAT Optimizer<br/>x[tid,wid] y[gid,wid] BoolVar<br/>task≤1 window≤1 resource/date<br/>dependency ordering<br/>5s 8 workers<br/>int times]
+
+    %% Phase 5
+    Q --> R{Solver Result}
+    R -->|OPTIMAL/FEASIBLE| S[Candidate Plan]
+    R -->|INFEASIBLE/TIME_LIMIT/UNKNOWN| T[Fallback Greedy<br/>multi-dept max3 validated]
+    T --> S
+    S --> U[Independent Validator<br/>14 checks A-L + grouping]
+    U -->|FAIL TRAIN_CONFLICT etc| U1[do not save as approved<br/>return violations 400]
+    U -->|PASS valid:true| V[DRAFT BlockPlan<br/>blocks, block_tasks, unscheduled + reasons<br/>baseline vs optimized<br/>objective breakdown]
+
+    %% Phase 6
+    V --> W{Planner Review<br/>Edit Draft?}
+    W -->|Yes| W1[PATCH /draft-blocks/{blk}<br/>service_date/start_time<br/>→ 200 if DRAFT + valid<br/>else 400 TRAIN/RESOURCE/POWER/DEPENDENCY<br/>AuditEvent EDIT old/new]
+    W -->|No| X[Submit for Review<br/>POST .../submit-review<br/>DRAFT→UNDER_REVIEW 200<br/>else 400 Only DRAFT]
+    X --> Y{Approve?<br/>POST .../approve<br/>CONTROL_OFFICE/ADMIN only}
+    Y -->|empty 401| Y1[401 Approver identity required]
+    Y -->|VIEWER/ENG 403| Y2[403 not authorized]
+    Y -->|CONTROL_OFFICE 200<br/>valid:true| Z[APPROVED<br/>Approval + AuditEvent<br/>Notification 5 depts]
+    Y -->|Reject no reason 400| Y3[REJECTED]
+    Z --> Z1[Publish<br/>PUBLISHED]
+
+    %% Phase 7
+    Z1 --> AA[Department Visibility<br/>GET .../approved-plans?department=ENG<br/>GET .../department-view?department=TRACTION<br/>my_blocks 7/5/6 integrated 13/15/14<br/>CONTROL_OFFICE 0/20 VIEWER 0/20 no leak]
+    AA --> AB[Execution<br/>POST /api/blocks/{BLK-*}/execution<br/>actual_start/end, status, completed_task_ids<br/>service_date, recorded_by]
+    AB --> AC{Validation}
+    AC -->|WND-* 400| AC1[Never use WND where BLK required]
+    AC -->|unknown 404| AC2[Block not found]
+    AC -->|actual_end<start 400| AC3
+    AC -->|cancel without reason 400| AC3
+    AC -->|task not in block 400| AC3
+    AC -->|malformed 422| AC4[VALIDATION_ERROR]
+    AC -->|duplicate same 200 idempotent<br/>diff 409| AC5
+    AC -->|PASS 201| AD[ExecutionRecord EXE-*]
+    AD --> AE[Update Block/Task statuses<br/>COMPLETED LOCKED<br/>AuditEvent EXECUTION]
+    AE --> AF[Metrics<br/>GET /api/metrics/{id}<br/>planned_vs_actual delta<br/>asset_downtime/availability<br/>completion_rate<br/>Recharts]
+
+    %% Phase 8
+    AF --> AG{Emergency?}
+    AG -->|No| AH[Monitor]
+    AG -->|Yes| AI[Replan<br/>POST .../replan {reason}<br/>freeze completed/locked<br/>regenerate windows<br/>recalculate priority<br/>rebuild groups<br/>optimizer → validate]
+    AI --> AJ[New Version<br/>base_plan_id new_plan_id<br/>preserved 19 moved/displaced/new + reasons<br/>Execution history preserved]
+    AJ --> AK[Approve Revision<br/>POST .../revisions {expected_version}<br/>200 else 409 stale]
+    AK --> AL[Export<br/>GET .../export?format=csv → 200 text/csv<br/>?format=pdf → 200<br/>contains PLAN-*]
+
+    style A fill:#fff3cd,stroke:#333
+    style Z fill:#e3f2fd,stroke:#1976d2
+    style AD fill:#e8f5e9,stroke:#4caf50
+    style AC1 fill:#ffebee,stroke:#f44336

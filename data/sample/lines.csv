@@ -1,0 +1,9 @@
+corridor_id,section_id,line_id,line_type,name
+COR-1,SEC-1,LIN-1,UP,UP Line Sec-1
+COR-1,SEC-1,LIN-2,DOWN,DOWN Line Sec-1
+COR-1,SEC-2,LIN-3,UP,UP Line Sec-2
+COR-1,SEC-2,LIN-4,DOWN,DOWN Line Sec-2
+COR-2,SEC-3,LIN-5,SINGLE,Single Line Sec-3
+COR-2,SEC-4,LIN-6,LOOP,Loop Line Sec-4
+COR-3,SEC-5,LIN-7,UP,UP Line Sec-5
+COR-3,SEC-6,LIN-8,DOWN,DOWN Line Sec-6
