@@ -5,101 +5,134 @@ from app.database import init_db, get_db
 from app.models import DepartmentModel, Corridor, Section, Line, Asset, Resource, RuleConfiguration
 import json
 
-# init
-init_db()
-# seed departments and corridors if empty
-from app.database import SessionLocal
-db = SessionLocal()
+import logging
+log = logging.getLogger(__name__)
 try:
-    if db.query(DepartmentModel).count()==0:
-        for d in ["CONTROL_OFFICE","ENGINEERING","S_AND_T","TRACTION","PROJECTS","VIEWER","ADMIN"]:
-            db.add(DepartmentModel(id=d, name=d))
-        db.commit()
-    if db.query(Corridor).count()==0:
-        # seed comprehensive corridors/sections/lines/assets/resources for fully functional synthetic demo (3 corridors, 6 sections, 8 lines, 12 assets, 14 resources)
-        db.add(Corridor(id="COR-1", name="Delhi-Howrah Corridor"))
-        db.add(Corridor(id="COR-2", name="Mumbai-Chennai Corridor"))
-        db.add(Corridor(id="COR-3", name="Howrah-Chennai Corridor"))
-        db.commit()
-        db.add(Section(id="SEC-1", corridor_id="COR-1", name="Ghaziabad - Tundla", from_km=0, to_km=120))
-        db.add(Section(id="SEC-2", corridor_id="COR-1", name="Tundla - Kanpur", from_km=120, to_km=320))
-        db.add(Section(id="SEC-3", corridor_id="COR-2", name="Kalyan - Pune", from_km=0, to_km=150))
-        db.add(Section(id="SEC-4", corridor_id="COR-2", name="Pune - Solapur", from_km=150, to_km=350))
-        db.add(Section(id="SEC-5", corridor_id="COR-3", name="Vijayawada - Chennai", from_km=0, to_km=400))
-        db.add(Section(id="SEC-6", corridor_id="COR-3", name="Kharagpur - Bhubaneswar", from_km=400, to_km=700))
-        db.commit()
-        db.add(Line(id="LIN-1", section_id="SEC-1", corridor_id="COR-1", line_type="UP", name="UP Line Sec-1"))
-        db.add(Line(id="LIN-2", section_id="SEC-1", corridor_id="COR-1", line_type="DOWN", name="DOWN Line Sec-1"))
-        db.add(Line(id="LIN-3", section_id="SEC-2", corridor_id="COR-1", line_type="UP", name="UP Line Sec-2"))
-        db.add(Line(id="LIN-4", section_id="SEC-2", corridor_id="COR-1", line_type="DOWN", name="DOWN Line Sec-2"))
-        db.add(Line(id="LIN-5", section_id="SEC-3", corridor_id="COR-2", line_type="SINGLE", name="Single Line Sec-3"))
-        db.add(Line(id="LIN-6", section_id="SEC-4", corridor_id="COR-2", line_type="LOOP", name="Loop Line Sec-4"))
-        db.add(Line(id="LIN-7", section_id="SEC-5", corridor_id="COR-3", line_type="UP", name="UP Line Sec-5"))
-        db.add(Line(id="LIN-8", section_id="SEC-6", corridor_id="COR-3", line_type="DOWN", name="DOWN Line Sec-6"))
-        db.commit()
-        db.add(Asset(id="AST-1", corridor_id="COR-1", section_id="SEC-1", line_id="LIN-1", asset_type="TRACK", asset_criticality=92, location_km=15))
-        db.add(Asset(id="AST-2", corridor_id="COR-1", section_id="SEC-1", line_id="LIN-2", asset_type="OHE", asset_criticality=88, location_km=22.5))
-        db.add(Asset(id="AST-3", corridor_id="COR-1", section_id="SEC-2", line_id="LIN-3", asset_type="SIGNAL", asset_criticality=85, location_km=145))
-        db.add(Asset(id="AST-4", corridor_id="COR-1", section_id="SEC-2", line_id="LIN-4", asset_type="TRACK", asset_criticality=78, location_km=180))
-        db.add(Asset(id="AST-5", corridor_id="COR-2", section_id="SEC-3", line_id="LIN-5", asset_type="TRACK", asset_criticality=75, location_km=45))
-        db.add(Asset(id="AST-6", corridor_id="COR-2", section_id="SEC-3", line_id="LIN-5", asset_type="BRIDGE", asset_criticality=90, location_km=60))
-        db.add(Asset(id="AST-7", corridor_id="COR-2", section_id="SEC-4", line_id="LIN-6", asset_type="OHE", asset_criticality=82, location_km=200))
-        db.add(Asset(id="AST-8", corridor_id="COR-2", section_id="SEC-4", line_id="LIN-6", asset_type="SIGNAL", asset_criticality=80, location_km=220))
-        db.add(Asset(id="AST-9", corridor_id="COR-3", section_id="SEC-5", line_id="LIN-7", asset_type="TRACK", asset_criticality=70, location_km=100))
-        db.add(Asset(id="AST-10", corridor_id="COR-3", section_id="SEC-5", line_id="LIN-7", asset_type="OHE", asset_criticality=77, location_km=150))
-        db.add(Asset(id="AST-11", corridor_id="COR-3", section_id="SEC-6", line_id="LIN-8", asset_type="TRACK", asset_criticality=84, location_km=500))
-        db.add(Asset(id="AST-12", corridor_id="COR-3", section_id="SEC-6", line_id="LIN-8", asset_type="SIGNAL", asset_criticality=86, location_km=550))
-        db.commit()
-        db.add(Resource(id="RES-1", resource_type="CREW", name="Track Gang A", department="ENGINEERING", capacity=2))
-        db.add(Resource(id="RES-2", resource_type="CREW", name="Track Gang B", department="ENGINEERING", capacity=2))
-        db.add(Resource(id="RES-3", resource_type="MACHINE", name="Tamping Machine M1", department="ENGINEERING", capacity=1))
-        db.add(Resource(id="RES-4", resource_type="MACHINE", name="Welding Plant W1", department="ENGINEERING", capacity=1))
-        db.add(Resource(id="RES-5", resource_type="MATERIAL", name="Ballast Stock", department="ENGINEERING", capacity=10))
-        db.add(Resource(id="RES-6", resource_type="CREW", name="Signal Team S1", department="S_AND_T", capacity=2))
-        db.add(Resource(id="RES-7", resource_type="CREW", name="Signal Team S2", department="S_AND_T", capacity=2))
-        db.add(Resource(id="RES-8", resource_type="MACHINE", name="Signal Test Van", department="S_AND_T", capacity=1))
-        db.add(Resource(id="RES-9", resource_type="CREW", name="OHE Crew O1", department="TRACTION", capacity=2))
-        db.add(Resource(id="RES-10", resource_type="CREW", name="OHE Crew O2", department="TRACTION", capacity=2))
-        db.add(Resource(id="RES-11", resource_type="MACHINE", name="Tower Wagon", department="TRACTION", capacity=1))
-        db.add(Resource(id="RES-12", resource_type="CREW", name="Project Team P1", department="PROJECTS", capacity=3))
-        db.add(Resource(id="RES-13", resource_type="MACHINE", name="Crane 100T", department="PROJECTS", capacity=1))
-        db.add(Resource(id="RES-14", resource_type="CREW", name="Control Office", department="CONTROL_OFFICE", capacity=5))
-        db.commit()
-    # Auto-ingest synthetic tasks/trains/goods if Task table empty (fully functional without manual import)
-    from app.models import Task, TrainMovement, GoodsForecast
-    if db.query(Task).count()==0:
+    init_db()
+except Exception as e:
+    log.warning(f"init_db failed, attempting SQLite fallback: {e}")
+    try:
+        import os
+        os.environ["DATABASE_MODE"] = "sqlite"
+        # ensure fallback URL is sqlite, not stale postgres URL
+        _fallback_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "railblock.db"))
+        os.environ["DATABASE_URL"] = f"sqlite:///{_fallback_db.replace(os.sep, '/')}"
+        from app.database import get_engine
+        get_engine.cache_clear() if hasattr(get_engine, "cache_clear") else None
         try:
-            import pathlib
-            from app.services.ingestion import run_import
-            base = pathlib.Path(__file__).parent.parent.parent  # project root
-            sample_dir = base / "data" / "sample"
-            # also try alternative path
-            if not sample_dir.exists():
-                sample_dir = pathlib.Path("D:/PROJECT2/MAYBE/RAIL/data/sample")
-            for fname, source in [("corridors.csv","COA"),("resources.csv","RESOURCES"),("trains.csv","TIMETABLE"),("goods_forecast.csv","GOODS_FORECAST"),("tasks.csv","TMS")]:
-                p = sample_dir / fname
-                if p.exists():
-                    content = p.read_text(encoding="utf-8")
-                    # use separate session to avoid nesting issues
-                    from app.database import SessionLocal as SL2
-                    db2 = SL2()
-                    try:
-                        run_import(db2, source, content, user_id="auto_synthetic")
-                    finally:
-                        db2.close()
-            # refresh counts
-            db.expire_all()
-        except Exception as e:
-            print(f"Auto synthetic ingestion failed: {e}")
+            get_engine()
+        except Exception:
+            pass
+        init_db()
+        log.warning("Degraded to SQLite after init_db failure")
+    except Exception as e2:
+        log.error(f"Fallback init_db also failed: {e2}")
+
+# seed departments and corridors if empty — wrapped so DB unreachable doesn't crash app
+from app.database import SessionLocal
+try:
+    db = SessionLocal()
+    try:
+        if db.query(DepartmentModel).count()==0:
+            for d in ["CONTROL_OFFICE","ENGINEERING","S_AND_T","TRACTION","PROJECTS","VIEWER","ADMIN"]:
+                db.add(DepartmentModel(id=d, name=d))
+            db.commit()
+        if db.query(Corridor).count()==0:
+            # seed comprehensive corridors/sections/lines/assets/resources for fully functional synthetic demo (3 corridors, 6 sections, 8 lines, 12 assets, 14 resources)
+            db.add(Corridor(id="COR-1", name="Delhi-Howrah Corridor"))
+            db.add(Corridor(id="COR-2", name="Mumbai-Chennai Corridor"))
+            db.add(Corridor(id="COR-3", name="Howrah-Chennai Corridor"))
+            db.commit()
+            db.add(Section(id="SEC-1", corridor_id="COR-1", name="Ghaziabad - Tundla", from_km=0, to_km=120))
+            db.add(Section(id="SEC-2", corridor_id="COR-1", name="Tundla - Kanpur", from_km=120, to_km=320))
+            db.add(Section(id="SEC-3", corridor_id="COR-2", name="Kalyan - Pune", from_km=0, to_km=150))
+            db.add(Section(id="SEC-4", corridor_id="COR-2", name="Pune - Solapur", from_km=150, to_km=350))
+            db.add(Section(id="SEC-5", corridor_id="COR-3", name="Vijayawada - Chennai", from_km=0, to_km=400))
+            db.add(Section(id="SEC-6", corridor_id="COR-3", name="Kharagpur - Bhubaneswar", from_km=400, to_km=700))
+            db.commit()
+            db.add(Line(id="LIN-1", section_id="SEC-1", corridor_id="COR-1", line_type="UP", name="UP Line Sec-1"))
+            db.add(Line(id="LIN-2", section_id="SEC-1", corridor_id="COR-1", line_type="DOWN", name="DOWN Line Sec-1"))
+            db.add(Line(id="LIN-3", section_id="SEC-2", corridor_id="COR-1", line_type="UP", name="UP Line Sec-2"))
+            db.add(Line(id="LIN-4", section_id="SEC-2", corridor_id="COR-1", line_type="DOWN", name="DOWN Line Sec-2"))
+            db.add(Line(id="LIN-5", section_id="SEC-3", corridor_id="COR-2", line_type="SINGLE", name="Single Line Sec-3"))
+            db.add(Line(id="LIN-6", section_id="SEC-4", corridor_id="COR-2", line_type="LOOP", name="Loop Line Sec-4"))
+            db.add(Line(id="LIN-7", section_id="SEC-5", corridor_id="COR-3", line_type="UP", name="UP Line Sec-5"))
+            db.add(Line(id="LIN-8", section_id="SEC-6", corridor_id="COR-3", line_type="DOWN", name="DOWN Line Sec-6"))
+            db.commit()
+            db.add(Asset(id="AST-1", corridor_id="COR-1", section_id="SEC-1", line_id="LIN-1", asset_type="TRACK", asset_criticality=92, location_km=15))
+            db.add(Asset(id="AST-2", corridor_id="COR-1", section_id="SEC-1", line_id="LIN-2", asset_type="OHE", asset_criticality=88, location_km=22.5))
+            db.add(Asset(id="AST-3", corridor_id="COR-1", section_id="SEC-2", line_id="LIN-3", asset_type="SIGNAL", asset_criticality=85, location_km=145))
+            db.add(Asset(id="AST-4", corridor_id="COR-1", section_id="SEC-2", line_id="LIN-4", asset_type="TRACK", asset_criticality=78, location_km=180))
+            db.add(Asset(id="AST-5", corridor_id="COR-2", section_id="SEC-3", line_id="LIN-5", asset_type="TRACK", asset_criticality=75, location_km=45))
+            db.add(Asset(id="AST-6", corridor_id="COR-2", section_id="SEC-3", line_id="LIN-5", asset_type="BRIDGE", asset_criticality=90, location_km=60))
+            db.add(Asset(id="AST-7", corridor_id="COR-2", section_id="SEC-4", line_id="LIN-6", asset_type="OHE", asset_criticality=82, location_km=200))
+            db.add(Asset(id="AST-8", corridor_id="COR-2", section_id="SEC-4", line_id="LIN-6", asset_type="SIGNAL", asset_criticality=80, location_km=220))
+            db.add(Asset(id="AST-9", corridor_id="COR-3", section_id="SEC-5", line_id="LIN-7", asset_type="TRACK", asset_criticality=70, location_km=100))
+            db.add(Asset(id="AST-10", corridor_id="COR-3", section_id="SEC-5", line_id="LIN-7", asset_type="OHE", asset_criticality=77, location_km=150))
+            db.add(Asset(id="AST-11", corridor_id="COR-3", section_id="SEC-6", line_id="LIN-8", asset_type="TRACK", asset_criticality=84, location_km=500))
+            db.add(Asset(id="AST-12", corridor_id="COR-3", section_id="SEC-6", line_id="LIN-8", asset_type="SIGNAL", asset_criticality=86, location_km=550))
+            db.commit()
+            db.add(Resource(id="RES-1", resource_type="CREW", name="Track Gang A", department="ENGINEERING", capacity=2))
+            db.add(Resource(id="RES-2", resource_type="CREW", name="Track Gang B", department="ENGINEERING", capacity=2))
+            db.add(Resource(id="RES-3", resource_type="MACHINE", name="Tamping Machine M1", department="ENGINEERING", capacity=1))
+            db.add(Resource(id="RES-4", resource_type="MACHINE", name="Welding Plant W1", department="ENGINEERING", capacity=1))
+            db.add(Resource(id="RES-5", resource_type="MATERIAL", name="Ballast Stock", department="ENGINEERING", capacity=10))
+            db.add(Resource(id="RES-6", resource_type="CREW", name="Signal Team S1", department="S_AND_T", capacity=2))
+            db.add(Resource(id="RES-7", resource_type="CREW", name="Signal Team S2", department="S_AND_T", capacity=2))
+            db.add(Resource(id="RES-8", resource_type="MACHINE", name="Signal Test Van", department="S_AND_T", capacity=1))
+            db.add(Resource(id="RES-9", resource_type="CREW", name="OHE Crew O1", department="TRACTION", capacity=2))
+            db.add(Resource(id="RES-10", resource_type="CREW", name="OHE Crew O2", department="TRACTION", capacity=2))
+            db.add(Resource(id="RES-11", resource_type="MACHINE", name="Tower Wagon", department="TRACTION", capacity=1))
+            db.add(Resource(id="RES-12", resource_type="CREW", name="Project Team P1", department="PROJECTS", capacity=3))
+            db.add(Resource(id="RES-13", resource_type="MACHINE", name="Crane 100T", department="PROJECTS", capacity=1))
+            db.add(Resource(id="RES-14", resource_type="CREW", name="Control Office", department="CONTROL_OFFICE", capacity=5))
+            db.commit()
+        # Auto-ingest synthetic tasks/trains/goods if Task table empty (fully functional without manual import)
+        from app.models import Task, TrainMovement, GoodsForecast
+        if db.query(Task).count()==0:
             try:
-                db.rollback()
-            except:
-                pass
-    if db.query(RuleConfiguration).count()==0:
-        db.add(RuleConfiguration(id="RULE-1", version="v1", priority_weights=json.dumps({"S":0.30,"U":0.20,"C":0.20,"O":0.15,"D":0.10,"R":0.05}), optimizer_weights=json.dumps({"priority":1.0}), hard_constraints=json.dumps(["train conflict","resource overlap"]), ai_model=json.dumps({"explainable":True})))
-        db.commit()
-finally:
-    db.close()
+                import pathlib
+                from app.services.ingestion import run_import
+                base = pathlib.Path(__file__).parent.parent.parent  # project root
+                sample_dir = base / "data" / "sample"
+                # also try alternative path
+                if not sample_dir.exists():
+                    sample_dir = pathlib.Path("D:/PROJECT2/MAYBE/RAIL/data/sample")
+                for fname, source in [("corridors.csv","COA"),("resources.csv","RESOURCES"),("trains.csv","TIMETABLE"),("goods_forecast.csv","GOODS_FORECAST"),("tasks.csv","TMS")]:
+                    p = sample_dir / fname
+                    if p.exists():
+                        content = p.read_text(encoding="utf-8")
+                        # use separate session to avoid nesting issues
+                        from app.database import SessionLocal as SL2
+                        db2 = SL2()
+                        try:
+                            run_import(db2, source, content, user_id="auto_synthetic")
+                        finally:
+                            db2.close()
+                # refresh counts
+                db.expire_all()
+            except Exception as e:
+                print(f"Auto synthetic ingestion failed: {e}")
+                try:
+                    db.rollback()
+                except:
+                    pass
+        if db.query(RuleConfiguration).count()==0:
+            db.add(RuleConfiguration(id="RULE-1", version="v1", priority_weights=json.dumps({"S":0.30,"U":0.20,"C":0.20,"O":0.15,"D":0.10,"R":0.05}), optimizer_weights=json.dumps({"priority":1.0}), hard_constraints=json.dumps(["train conflict","resource overlap"]), ai_model=json.dumps({"explainable":True})))
+            db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        log.warning(f"Seeding skipped due to DB error: {e}")
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+except Exception as e:
+    log.warning(f"DB session not available, seeding skipped: {e}")
 
 app = FastAPI(
     title="RailBlock AI - Human-approved planning and decision-support prototype",
@@ -206,13 +239,16 @@ _static_candidates = [
 ]
 STATIC_DIR = None
 for _cand in _static_candidates:
-    if _cand.exists() and (_cand / "index.html").exists():
+    # verify via both pathlib and os.path.exists for robustness (Render single-image)
+    if _cand.exists() and (_cand / "index.html").exists() and os.path.exists(str(_cand / "index.html")):
         STATIC_DIR = _cand
         break
-if STATIC_DIR is not None and (STATIC_DIR / "assets").exists():
+if STATIC_DIR is not None and (STATIC_DIR / "assets").exists() and os.path.exists(str(STATIC_DIR / "assets")):
     app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
     @app.get("/", include_in_schema=False)
     async def _spa_root():
+        # FileResponse via os.path.exists verified static/index.html
+        assert os.path.exists(str(STATIC_DIR / "index.html"))
         return FileResponse(str(STATIC_DIR / "index.html"))
 
 # GET /api/departments already in task_router, ensure
@@ -237,15 +273,18 @@ def explanations(plan_id: str, db: Session = Depends(get_db)):
     return exps
 
 # SPA fallback — must be last, after all API routes (explanations, docs, health)
-if STATIC_DIR is not None and (STATIC_DIR / "assets").exists():
+if STATIC_DIR is not None and (STATIC_DIR / "assets").exists() and os.path.exists(str(STATIC_DIR / "index.html")):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_fallback(full_path: str):
         if full_path.startswith(("api", "health", "docs", "openapi.json", "redoc")):
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Not found")
         candidate = STATIC_DIR / full_path
-        if full_path and candidate.exists() and candidate.is_file():
+        # serve static file if exists, else SPA index.html — verified via os.path.exists + FileResponse
+        if full_path and os.path.exists(str(candidate)) and candidate.exists() and candidate.is_file():
             return FileResponse(str(candidate))
+        # fallback to index.html for SPA routing (non-api/health/docs paths)
+        assert os.path.exists(str(STATIC_DIR / "index.html"))
         return FileResponse(str(STATIC_DIR / "index.html"))
 
 # For frontend to fetch plan explanations etc already covered
