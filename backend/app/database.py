@@ -91,8 +91,8 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL and not is_postgres() else {},
     echo=False,
-    # Postgres production: pool pre-ping + sizing for Supabase 6543/5432 — Render free tuned (pool_timeout 5 < health 1.9*? health guards with thread, but 5 reduces queue)
-    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 5} if is_postgres() else {}),
+    # Postgres production: pool pre-ping + sizing for Supabase 6543/5432 — Render free tuned (pool_timeout 10 allows burst, health 4s < Render 5s)
+    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if is_postgres() else {}),
 )
 
 # Enable WAL, FK, busy_timeout for every new DBAPI connection (SQLite only)
@@ -140,7 +140,7 @@ def get_engine():
                 new_url,
                 connect_args={"check_same_thread": False} if "sqlite" in new_url and not want_pg else {},
                 echo=False,
-                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 5} if want_pg else {}),
+                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if want_pg else {}),
             )
             SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     except Exception:
@@ -285,33 +285,16 @@ def get_diagnostics():
                 "warning": "DATABASE_MODE=postgres but DATABASE_URL still sqlite — set DATABASE_URL=postgresql://... and restart. Running in degraded sqlite mode.",
                 "misconfigured": True,
             }
-        # Normal postgres: try version query with short timeout (< pool_timeout) to avoid health hang
+        # Normal postgres: direct version query (pool_timeout 10 allows burst, health 4s < Render 5s)
         ver = "PostgreSQL"
         try:
-            import concurrent.futures as _cf
-            def _ver_query():
-                with engine.connect() as conn:
-                    try:
-                        return conn.execute(text("SELECT version()")).scalar()
-                    except Exception:
-                        return "PostgreSQL"
-            _ex = _cf.ThreadPoolExecutor(max_workers=1)
-            _fut = _ex.submit(_ver_query)
-            try:
-                ver = _fut.result(timeout=1.4)
-            except _cf.TimeoutError:
+            with engine.connect() as conn:
                 try:
-                    _fut.cancel()
+                    ver = conn.execute(text("SELECT version()")).scalar()
                 except Exception:
-                    pass
-                ver = "PostgreSQL (version query timeout — pool busy)"
-            finally:
-                try:
-                    _ex.shutdown(wait=False, cancel_futures=True)
-                except TypeError:
-                    _ex.shutdown(wait=False)
+                    ver = "PostgreSQL"
         except Exception:
-            ver = "PostgreSQL"
+            ver = "PostgreSQL (version query failed — pool busy)"
         try:
             # live mode for transparency — no DB needed
             live = False

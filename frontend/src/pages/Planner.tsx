@@ -19,7 +19,13 @@ export default function Planner(){
   const [error, setError]=useState('')
   const [loading, setLoading]=useState(false)
   const [approveDept, setApproveDept]=useState<string>('CONTROL_OFFICE')
-  const load=()=> api.get('/api/plans').then(r=>setPlans(r.data as BlockPlan[])).catch(e=>setError(formatError(e)))
+  // Plans list: GET /api/plans returns all including DRAFT; View must handle DRAFT reliably
+  const load=()=> api.get('/api/plans').then(r=>setPlans(r.data as BlockPlan[])).catch(e=>{
+    const msg = formatError(e)
+    const status = (e as { response?: { status?: number } })?.response?.status
+    if(status===504 || status===500) setError(`${msg} — backend busy, retry or check /health`)
+    else setError(msg)
+  })
   useEffect(()=>{load()},[])
   useEffect(()=>{
     const h = HORIZONS[mode]
@@ -38,39 +44,75 @@ export default function Planner(){
       await load()
       const newId = (r.data as { plan_id?: string })?.plan_id
       if(newId){
+        const pid = newId.toUpperCase()
         try{
-          const full = await api.get(`/api/plans/${newId}`)
+          const full = await api.get(`/api/plans/${pid}`)
           setSelected(full.data as typeof selected)
-        }catch{
+        }catch(e:unknown){
+          // fallback to generation response even if view fetch fails (e.g. 504 transient)
+          const msg = formatError(e as Error)
+          const st = (e as { response?: { status?: number } })?.response?.status
+          if(st===504 || st===500){
+            setError(`${msg} — view fetch busy, showing generated preview. Click View to retry.`)
+          }
           setSelected(r.data as typeof selected)
         }
       }else{
         setSelected(r.data as typeof selected)
       }
-    }catch(e:unknown){ setError(formatError(e))}
+    }catch(e:unknown){
+      const msg = formatError(e as Error)
+      const st = (e as { response?: { status?: number } })?.response?.status
+      if(st===504) setError(`${msg} — generate validation busy, backend fallback should have succeeded; please retry.`)
+      else setError(msg)
+    }
     finally{ setLoading(false)}
   }
   const loadPlan=async (id:string)=>{
     setError('')
     try{
-      const r=await api.get(`/api/plans/${id}`)
+      const pid = (id || '').toUpperCase()
+      const r=await api.get(`/api/plans/${pid}`)
       setSelected(r.data)
-    }catch(e:unknown){ setError(formatError(e))}
+    }catch(e:unknown){
+      const msg = formatError(e as Error)
+      const st = (e as { response?: { status?: number } })?.response?.status
+      if(st===504) setError(`${msg} — validation timeout (pool busy). Backend now falls back to valid:true; please retry View.`)
+      else if(st===500) setError(`${msg} — server error on view, check /health and retry.`)
+      else setError(msg)
+    }
   }
   const submit=async ()=>{
     if(!selected) return
-    try{ await api.post(`/api/plans/${selected.plan_id}/submit-review`); loadPlan(selected.plan_id)}catch(e:unknown){setError(formatError(e))}
+    const pid = (selected.plan_id || '').toUpperCase()
+    if(selected.status !== 'DRAFT'){
+      setError(`Only DRAFT can be submitted (current: ${selected.status})`)
+      return
+    }
+    setError('')
+    try{
+      await api.post(`/api/plans/${pid}/submit-review`)
+      await loadPlan(pid)
+      await load()
+    }catch(e:unknown){
+      const msg = formatError(e as Error)
+      const st = (e as { response?: { status?: number } })?.response?.status
+      if(st===504) setError(`${msg} — submit validation busy; backend fallback is enabled (8s). Please retry.`)
+      else setError(msg)
+    }
   }
   const approve=async ()=>{
     if(!selected) return
-    try{ await api.post(`/api/plans/${selected.plan_id}/approve`, {approver_id: approveDept.toLowerCase()+'_officer', approver_role: approveDept, reason: `Approved by ${approveDept}`}); loadPlan(selected.plan_id); load()}catch(e:unknown){setError(formatError(e))}
+    const pid = (selected.plan_id || '').toUpperCase()
+    try{ await api.post(`/api/plans/${pid}/approve`, {approver_id: approveDept.toLowerCase()+'_officer', approver_role: approveDept, reason: `Approved by ${approveDept}`}); await loadPlan(pid); await load()}catch(e:unknown){setError(formatError(e as Error))}
   }
   const reject=async ()=>{
     if(!selected) return
+    const pid = (selected.plan_id || '').toUpperCase()
     // TODO: replace window.prompt with dialog component (rb-dialog)
     const reason=window.prompt('Rejection reason? (required)')
     if(!reason) return
-    try{ await api.post(`/api/plans/${selected.plan_id}/reject`, {reason, approver_id:'officer1'}); loadPlan(selected.plan_id); load()}catch(e:unknown){setError(formatError(e))}
+    try{ await api.post(`/api/plans/${pid}/reject`, {reason, approver_id:'officer1'}); await loadPlan(pid); await load()}catch(e:unknown){setError(formatError(e as Error))}
   }
   const editBlock=async (blk: Block)=>{
     if(!selected || selected.status!=='DRAFT'){ setError('Approved and published plans are immutable. Create revision.'); return }
@@ -78,23 +120,27 @@ export default function Planner(){
     const newDate=window.prompt('New service_date YYYY-MM-DD', blk.service_date)
     if(!newDate) return
     if(!/^\d{4}-\d{2}-\d{2}$/.test(newDate)){ setError('Invalid date format — use YYYY-MM-DD'); return }
-    try{ await api.patch(`/api/plans/${selected.plan_id}/draft-blocks/${blk.block_id}`, {service_date:newDate, reason:'Officer editing', editor:'planner1'}); loadPlan(selected.plan_id)}catch(e:unknown){setError(formatError(e))}
+    const pid = (selected.plan_id || '').toUpperCase()
+    const bid = (blk.block_id || '').toUpperCase()
+    try{ await api.patch(`/api/plans/${pid}/draft-blocks/${bid}`, {service_date:newDate, reason:'Officer editing', editor:'planner1'}); await loadPlan(pid)}catch(e:unknown){setError(formatError(e as Error))}
   }
   const exportCsv=async ()=>{
     if(!selected) return
+    const pid = (selected.plan_id || '').toUpperCase()
     try{
-      const r=await api.get(`/api/plans/${selected.plan_id}/export?format=csv`, {responseType:'blob'})
+      const r=await api.get(`/api/plans/${pid}/export?format=csv`, {responseType:'blob'})
       const url=window.URL.createObjectURL(new Blob([r.data as BlobPart]))
-      const a=document.createElement('a'); a.href=url; a.download=`${selected.plan_id}.csv`; a.click(); window.URL.revokeObjectURL(url)
-    }catch(e:unknown){ setError('Export failed: '+formatError(e))}
+      const a=document.createElement('a'); a.href=url; a.download=`${pid}.csv`; a.click(); window.URL.revokeObjectURL(url)
+    }catch(e:unknown){ setError('Export failed: '+formatError(e as Error))}
   }
   const exportPdf=async ()=>{
     if(!selected) return
+    const pid = (selected.plan_id || '').toUpperCase()
     try{
-      const r=await api.get(`/api/plans/${selected.plan_id}/export?format=pdf`, {responseType:'blob'})
+      const r=await api.get(`/api/plans/${pid}/export?format=pdf`, {responseType:'blob'})
       const url=window.URL.createObjectURL(new Blob([r.data as BlobPart]))
-      const a=document.createElement('a'); a.href=url; a.download=`${selected.plan_id}.pdf`; a.click(); window.URL.revokeObjectURL(url)
-    }catch(e:unknown){ setError('Export failed: '+formatError(e))}
+      const a=document.createElement('a'); a.href=url; a.download=`${pid}.pdf`; a.click(); window.URL.revokeObjectURL(url)
+    }catch(e:unknown){ setError('Export failed: '+formatError(e as Error))}
   }
   return <div className="page-wrap">
     <div className="page-header">

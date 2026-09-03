@@ -21,8 +21,8 @@ def _fast_diag(reason: str = "pool busy"):
 
 @router.get("/health")
 def health():
-    # Non-blocking DB check — avoid Render 502 where pool_timeout 5s > health 1.9s
-    # Use engine.connect() with worker thread timeout <2s, return degraded quickly if pool busy
+    # Non-blocking DB check — avoid Render 502 where pool_timeout 10s > health 4s (still < Render 5s)
+    # Use engine.connect() with worker thread timeout <4s, return degraded quickly if pool busy
     # Always report correct database type (PostgreSQL vs SQLite) even in degraded.
     def _db_check():
         # Use engine.connect() (pool_pre_ping handles stale) with short execution
@@ -32,10 +32,10 @@ def health():
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     fut = executor.submit(_db_check)
     try:
-        # Enforce <2s wall-clock even if pool_timeout is 5s (Render health 5s)
-        fut.result(timeout=1.9)
+        # Enforce <4s wall-clock even if pool_timeout is 10s (Render health 5s)
+        fut.result(timeout=4.0)
     except concurrent.futures.TimeoutError:
-        # Do not wait for worker — return degraded quickly (<2s) but with correct DB label
+        # Do not wait for worker — return degraded quickly (<4s) but with correct DB label
         try:
             fut.cancel()
         except Exception:
@@ -45,7 +45,7 @@ def health():
         except TypeError:
             # Python <3.9 fallback
             executor.shutdown(wait=False)
-        diag = _fast_diag("pool busy — health check <2s")
+        diag = _fast_diag("pool busy — health check <4s")
         diag["live_mode"] = False
         try:
             from app.config import settings
@@ -55,7 +55,7 @@ def health():
             diag["database_mode"] = getattr(settings, "database_mode", diag["database_mode"])
         except Exception:
             pass
-        return {"status": "degraded", "error": "DB pool timeout (health check <2s)", "diagnostics": diag}
+        return {"status": "degraded", "error": "DB pool timeout (health check <4s)", "diagnostics": diag}
     except (TimeoutError, OperationalError) as e:
         try:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -77,25 +77,10 @@ def health():
         except TypeError:
             executor.shutdown(wait=False)
 
-    # DB reachable — gather diagnostics with timeout so health never hangs on postgres version query
+    # DB reachable — gather diagnostics directly (no inner thread; pool_timeout 10 allows burst, health DB check already passed)
     diag = None
     try:
-        # get_diagnostics itself does a DB connect (SELECT version) which could block pool_timeout; guard with 1.8s
-        inner_ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        inner_fut = inner_ex.submit(get_diagnostics)
-        try:
-            diag = inner_fut.result(timeout=1.8)
-        except concurrent.futures.TimeoutError:
-            try:
-                inner_fut.cancel()
-            except Exception:
-                pass
-            diag = _fast_diag("diagnostics timeout — DB reachable but version query slow")
-        finally:
-            try:
-                inner_ex.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                inner_ex.shutdown(wait=False)
+        diag = get_diagnostics()
     except Exception as e:
         diag = _fast_diag(str(e)[:120])
         diag["error"] = str(e)[:200]
