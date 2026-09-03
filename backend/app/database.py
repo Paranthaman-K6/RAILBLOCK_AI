@@ -91,8 +91,8 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL and not is_postgres() else {},
     echo=False,
-    # Postgres production: pool pre-ping + sizing for Supabase 6543/5432
-    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 30} if is_postgres() else {}),
+    # Postgres production: pool pre-ping + sizing for Supabase 6543/5432 — Render free tuned (timeout < health 5s)
+    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if is_postgres() else {}),
 )
 
 # Enable WAL, FK, busy_timeout for every new DBAPI connection (SQLite only)
@@ -140,7 +140,7 @@ def get_engine():
                 new_url,
                 connect_args={"check_same_thread": False} if "sqlite" in new_url and not want_pg else {},
                 echo=False,
-                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 30} if want_pg else {}),
+                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if want_pg else {}),
             )
             SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     except Exception:

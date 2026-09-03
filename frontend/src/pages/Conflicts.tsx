@@ -9,8 +9,40 @@ interface ConflictEntry {
   window?: string
   service_date?: string
   corridor?: string
-  result?: { valid?: boolean; status?: string; conflicts?: { code: string }[]; train_conflict?: boolean; goods_risk?: string }
+  result?: { valid?: boolean; status?: string; conflicts?: { code: string; message?: string }[]; train_conflict?: boolean; goods_risk?: string; compatible?: boolean; feasibility?: string; violations?: unknown[] }
   error?: string
+}
+
+function toCode(reason: string): string {
+  if (reason.includes('Train')) return 'TRAIN_CONFLICT'
+  if (reason.includes('Goods')) return 'GOODS_RISK'
+  if (reason.includes('Resource')) return 'RESOURCE_CONFLICT'
+  if (reason.includes('Power')) return 'POWER_MISMATCH'
+  if (reason.includes('Signal')) return 'SIGNAL_MISMATCH'
+  if (reason.includes('Corridor')) return 'CORRIDOR_MISMATCH'
+  if (reason.includes('Section')) return 'SECTION_MISMATCH'
+  if (reason.includes('Line')) return 'LINE_MISMATCH'
+  if (reason.includes('Block type')) return 'BLOCK_TYPE_MISMATCH'
+  if (reason.includes('Duration')) return 'DURATION_OVERFLOW'
+  if (reason.toLowerCase().includes('rejected')) return 'WINDOW_REJECTED'
+  return 'UNKNOWN'
+}
+
+function mapDetect(data: Record<string, unknown>) {
+  const d = data as { compatible?: boolean; feasibility?: string; reasons?: string[]; reason?: string }
+  const reasons: string[] = d.reasons || (d.reason ? [d.reason] : [])
+  const filtered = reasons.filter((r) => r !== 'OK')
+  return {
+    valid: d.compatible,
+    status: d.feasibility,
+    compatible: d.compatible,
+    feasibility: d.feasibility,
+    reasons,
+    conflicts: filtered.map((reason) => ({ code: toCode(reason), message: reason })),
+    train_conflict: reasons.some((s) => s.includes('Train')),
+    goods_risk: reasons.some((s) => s.includes('Goods')) ? 'RISK' : undefined,
+    _raw: data,
+  }
 }
 
 export default function Conflicts() {
@@ -45,7 +77,8 @@ export default function Conflicts() {
     setLoading(true)
     try {
       const r = await api.post('/api/conflicts/detect', { task_id: task, window_id: window })
-      setRes(r.data as Record<string, unknown>)
+      const mapped = mapDetect(r.data as Record<string, unknown>)
+      setRes(mapped as unknown as Record<string, unknown>)
     } catch (e: unknown) {
       setRes({ error: formatError(e) })
     } finally {
@@ -68,21 +101,76 @@ export default function Conflicts() {
             blocks: { block_id: string; window_id: string; service_date: string; corridor_id: string; tasks?: ({ task_id: string } | string)[] }[]
           },
       )
-      const results: ConflictEntry[] = await Promise.all(
-        plan.blocks.slice(0, 10).map(async (b) => {
+      // Primary: authoritative plan-level validation (14 checks via plan_validator)
+      try {
+        const val = await api.post(`/api/plans/${latest}/validate`).then((r) => r.data as { valid: boolean; violations: { code: string; message: string; severity?: string }[] })
+        const violations = val.violations || []
+        const results: ConflictEntry[] = plan.blocks.map((b) => {
+          const blockViolations = violations.filter((v) => v.message.includes(b.block_id) || (b.window_id && v.message.includes(b.window_id)))
+          const conflicts = blockViolations.map((v) => ({ code: v.code, message: v.message }))
+          const train_conflict = blockViolations.some((v) => v.code === 'TRAIN_CONFLICT')
+          const goods_risk = blockViolations.some((v) => v.code === 'GOODS_RISK') ? 'RISK' : undefined
+          const result = {
+            valid: blockViolations.length === 0,
+            status: blockViolations.length ? 'HARD_CONFLICT' : 'FEASIBLE',
+            conflicts,
+            train_conflict,
+            goods_risk,
+            violations: blockViolations,
+            overallValid: val.valid,
+          }
+          return { block: b.block_id, window: b.window_id, service_date: b.service_date, corridor: b.corridor_id, result: result as unknown as ConflictEntry['result'] }
+        })
+        const hasUnmatched = violations.length > 0 && results.every((r) => !(r.result?.conflicts?.length))
+        if (hasUnmatched) {
+          const fallbackConflicts = violations.map((v) => ({ code: v.code, message: v.message }))
+          const trainAll = violations.some((v) => v.code === 'TRAIN_CONFLICT')
+          const goodsAll = violations.some((v) => v.code === 'GOODS_RISK') ? 'RISK' : undefined
+          results.forEach((r) => {
+            const ra = r.result as unknown as Record<string, unknown>
+            if (!((ra.conflicts as unknown[])?.length)) {
+              ra.conflicts = fallbackConflicts
+              ra.valid = false
+              ra.status = 'HARD_CONFLICT'
+              ra.train_conflict = trainAll
+              ra.goods_risk = goodsAll
+            }
+          })
+        }
+        setAllConflicts(results)
+        return
+      } catch {
+        // fallback to per-block detect with full task coverage
+      }
+      const fallbackResults: ConflictEntry[] = await Promise.all(
+        plan.blocks.map(async (b) => {
           try {
-            const taskId =
-              typeof b.tasks?.[0] === 'string'
-                ? (b.tasks[0] as string)
-                : ((b.tasks?.[0] as { task_id?: string })?.task_id || 'TSK-001')
-            const r = await api.post('/api/conflicts/detect', { task_id: taskId, window_id: b.window_id })
-            return { block: b.block_id, window: b.window_id, service_date: b.service_date, corridor: b.corridor_id, result: r.data as ConflictEntry['result'] }
+            const taskIds: string[] = (b.tasks || []).map((t) => (typeof t === 'string' ? (t as string) : ((t as { task_id?: string })?.task_id || ''))).filter(Boolean) as string[]
+            const ids = taskIds.length ? taskIds : ['TSK-001']
+            const perTask = await Promise.all(
+              ids.map(async (taskId) => {
+                const r = await api.post('/api/conflicts/detect', { task_id: taskId, window_id: b.window_id })
+                return mapDetect(r.data as Record<string, unknown>)
+              }),
+            )
+            const combinedConflicts = perTask.flatMap((p) => p.conflicts)
+            const combinedValid = perTask.every((p) => p.valid !== false)
+            const hasHard = perTask.some((p) => p.feasibility === 'HARD_CONFLICT' || p.valid === false)
+            const result = {
+              valid: combinedValid,
+              status: hasHard ? 'HARD_CONFLICT' : combinedConflicts.length ? 'CONFLICT' : 'FEASIBLE',
+              conflicts: combinedConflicts,
+              train_conflict: perTask.some((p) => p.train_conflict),
+              goods_risk: perTask.some((p) => p.goods_risk) ? 'RISK' : undefined,
+              perTask,
+            }
+            return { block: b.block_id, window: b.window_id, service_date: b.service_date, corridor: b.corridor_id, result: result as unknown as ConflictEntry['result'] }
           } catch (e: unknown) {
             return { block: b.block_id, error: formatError(e) }
           }
         }),
       )
-      setAllConflicts(results)
+      setAllConflicts(fallbackResults)
     } catch (e: unknown) {
       setAllConflicts([{ error: formatError(e) }])
     } finally {
@@ -97,9 +185,12 @@ export default function Conflicts() {
 
   const isError = !!(res as { error?: string } | null)?.error
   const conflictsArr = ((res as { conflicts?: unknown[] } | null)?.conflicts as unknown[]) || []
+  const violationsArr = ((res as { violations?: unknown[] } | null)?.violations as unknown[]) || []
   const validField = (res as { valid?: boolean } | null)?.valid
-  const isHard = validField === false || conflictsArr.length > 0
-  const feasibleLabel = !isError && !isHard ? 'FEASIBLE — No conflicts' : validField === false ? 'HARD_CONFLICT' : conflictsArr.length ? 'Conflicts found' : '—'
+  const compatibleField = (res as { compatible?: boolean } | null)?.compatible
+  const feasibilityField = (res as { feasibility?: string } | null)?.feasibility
+  const isHard = validField === false || compatibleField === false || feasibilityField === 'HARD_CONFLICT' || conflictsArr.length > 0 || violationsArr.length > 0
+  const feasibleLabel = !isError && !isHard ? 'FEASIBLE — No conflicts' : validField === false || compatibleField === false || feasibilityField === 'HARD_CONFLICT' ? 'HARD_CONFLICT' : conflictsArr.length || violationsArr.length ? 'Conflicts found' : '—'
 
   return (
     <div className="page-wrap">
@@ -230,7 +321,8 @@ export default function Conflicts() {
         )}
       </Card>
 
-      <Card title="Batch Conflict Matrix (Latest Plan, Up to 10 Blocks)">
+      {/* Batch Conflict Matrix (Latest Plan, All Blocks (Batch via plan validate)) */}
+      <Card title="All Blocks (Batch via plan validate)">
         {allConflicts.length === 0 ? (
           <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
             Click “Check All Blocks” to scan latest plan’s blocks against trains/goods/resources. Efficient batch with early exit.
@@ -288,9 +380,9 @@ export default function Conflicts() {
               Color: <span style={{ background: '#ffebee', padding: '2px 6px', borderRadius: 4, border: '1px solid #f8bbd0' }}>Conflict</span>{' '}
               <span style={{ background: '#e8f5e9', padding: '2px 6px', borderRadius: 4, border: '1px solid #c8e6c9' }}>Feasible</span> • Uses{' '}
               <code className="mono-pill" style={{ fontSize: 10 }}>
-                POST /api/conflicts/detect
+                POST /api/plans/{'{plan_id}'}/validate
               </code>{' '}
-              per block, with bulk window/train maps on backend (no N+1).
+              authoritative 14 checks (TRAIN_CONFLICT, GOODS_RISK, RESOURCE_CONFLICT etc via services/plan_validator.py); fallback per-task detect covers all tasks per block.
             </div>
           </div>
         )}

@@ -220,7 +220,7 @@ def run_cpsat_optimizer(db: Session, horizon_start: str, horizon_end: str, horiz
         model.Maximize(sum(obj_terms))
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = time_limit
-        solver.parameters.num_search_workers = 8
+        solver.parameters.num_search_workers = 2
         start = time.time()
         status = solver.Solve(model)
         runtime = time.time() - start

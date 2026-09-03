@@ -182,7 +182,7 @@ export default function Planner(){
         {selected.status==='DRAFT' && <><button onClick={submit} className="btn btn-amber">② Submit for Review</button> <button onClick={()=>selected.blocks?.[0] && editBlock(selected.blocks[0] as Block)} disabled={!selected.blocks?.length} className="btn btn-ghost btn-sm">Edit Draft (test)</button></>}
         {selected.status==='UNDER_REVIEW' && <>
           <span style={{fontSize:12, fontWeight:600, color:'var(--text-primary)'}}>Approvals by every department:</span>
-          <select value={approveDept} onChange={e=>setApproveDept(e.target.value)} className="rb-select" style={{height:32, fontSize:12}}>{APPROVER_ROLES.map(r=> <option key={r} value={r}>{r}</option>)}</select>
+          <select value={approveDept} onChange={e=>setApproveDept(e.target.value)} className="rb-select" style={{height:32, fontSize:12}}>{(['CONTROL_OFFICE','ADMIN'] as const).map(r=> <option key={r} value={r}>{r}</option>)}</select>
           <button onClick={approve} className="btn btn-blue">Approve as {approveDept}</button>
           <button onClick={reject} className="btn btn-ghost">Reject</button>
           {selected.pending_departments && selected.pending_departments.length>0 && <span style={{fontSize:11, color:'#e65100'}}>Pending: {selected.pending_departments.join(', ')} → each dept must approve, or CONTROL_OFFICE final approves all</span>}

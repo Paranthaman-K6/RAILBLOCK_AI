@@ -48,7 +48,7 @@ export default function Gantt({ blocks }: GanttProps) {
               <td style={{ fontSize: 11, lineHeight: 1.3 }}>
                 {(b.tasks ?? []).length ? (
                   <span className="mono" style={{ fontSize: 11, background: '#f8fafb', padding: '2px 6px', borderRadius: 4, border: '1px solid #eef2f6', wordBreak: 'break-word' }}>
-                    {(b.tasks ?? []).map((t) => t.task_id).join(', ')}
+                    {(b.tasks ?? []).map((t: unknown) => typeof t === 'string' ? t : ((t as { task_id?: string; id?: string }).task_id || (t as { id?: string }).id || '')).join(', ')}
                   </span>
                 ) : (
                   <span style={{ color: 'var(--text-muted)' }}>—</span>
