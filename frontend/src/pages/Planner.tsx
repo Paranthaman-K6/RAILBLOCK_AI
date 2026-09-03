@@ -8,7 +8,6 @@ import { formatError } from '../services/errors'
 import { PrototypeDisclaimer } from '../components/WarningBanner'
 import { formatDateKolkata, minutesToTime } from '../services/formatters'
 import { HORIZONS } from '../constants/horizons'
-import { APPROVER_ROLES } from '../constants/departments'
 import type { BlockPlan, Block } from '../types'
 
 export default function Planner(){
@@ -31,13 +30,23 @@ export default function Planner(){
     setSelected(null)
     setError('')
   },[mode])
-  const generate=async ()=>{
+   const generate=async ()=>{
     setError('')
     setLoading(true)
     try{
       const r=await api.post('/api/plans/generate', {horizon_start:horizonStart, horizon_end:horizonEnd, horizon_type:mode})
-      setSelected(r.data)
       await load()
+      const newId = (r.data as { plan_id?: string })?.plan_id
+      if(newId){
+        try{
+          const full = await api.get(`/api/plans/${newId}`)
+          setSelected(full.data as typeof selected)
+        }catch{
+          setSelected(r.data as typeof selected)
+        }
+      }else{
+        setSelected(r.data as typeof selected)
+      }
     }catch(e:unknown){ setError(formatError(e))}
     finally{ setLoading(false)}
   }
@@ -212,7 +221,14 @@ export default function Planner(){
           <span>Dept <span className="pill pill--muted" style={{fontSize:11}}>{b.department||'—'}</span></span>
         </div>
         <div style={{fontSize:11, color:'var(--text-secondary)', marginTop:6, lineHeight:1.4}}>
-          Tasks: <span className="mono" style={{fontSize:11, background:'#f8fafb', padding:'2px 6px', borderRadius:4, border:'1px solid #eef2f6', wordBreak:'break-word'}}>{(b.tasks||[]).map((t)=> `${(t as {task_id?:string}).task_id||t} (${(t as {department?:string}).department||''}) ${(t as {status?:string}).status||''}`).join(', ') || '—'}</span>
+          Tasks: <span className="mono" style={{fontSize:11, background:'#f8fafb', padding:'2px 6px', borderRadius:4, border:'1px solid #eef2f6', wordBreak:'break-word'}}>{(b.tasks||[]).map((t: unknown)=>{
+            if(t == null) return ''
+            if(typeof t === 'string') return t
+            const o = t as { task_id?: string; id?: string; department?: string; status?: string }
+            const id = o.task_id || o.id || ''
+            if(!id) return ''
+            return `${id}${o.department ? ` (${o.department})` : ''}${o.status ? ` ${o.status}` : ''}`
+          }).filter(Boolean).join(', ') || '—'}</span>
         </div>
         {selected.status==='DRAFT' ? <button onClick={()=>editBlock(b as Block)} className="btn btn-ghost btn-sm" style={{marginTop:8}}>Edit block date</button> : <span style={{marginLeft:0, fontSize:11, color:'var(--text-muted)', marginTop:6, display:'inline-block'}}>(immutable)</span>}
       </div>)}

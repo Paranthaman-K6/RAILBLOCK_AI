@@ -6,12 +6,14 @@ interface Props {
 
 export default function ValidationPanel({ validation }: Props) {
   if (!validation) return null
+  const violations = Array.isArray(validation.violations) ? validation.violations : []
+  const isValid = !!validation.valid
   return (
-    <div style={{ background: validation.valid ? '#e8f5e9' : '#ffebee', padding: 12, borderRadius: 8, margin: '8px 0' }}>
-      <strong>Validation: {validation.valid ? 'PASSED' : 'FAILED'}</strong>
-      {!validation.valid && (
+    <div style={{ background: isValid ? '#e8f5e9' : '#ffebee', padding: 12, borderRadius: 8, margin: '8px 0' }}>
+      <strong>Validation: {isValid ? 'PASSED' : 'FAILED'}</strong>
+      {!isValid && (
         <ul>
-          {validation.violations.map((v, i) => (
+          {violations.map((v, i) => (
             <li key={i}>
               <code>{v.code}</code> - {v.message}
             </li>

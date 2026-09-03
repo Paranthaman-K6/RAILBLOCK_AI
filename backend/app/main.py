@@ -10,23 +10,33 @@ log = logging.getLogger(__name__)
 try:
     init_db()
 except Exception as e:
-    log.warning(f"init_db failed, attempting SQLite fallback: {e}")
-    try:
-        import os
-        os.environ["DATABASE_MODE"] = "sqlite"
-        # ensure fallback URL is sqlite, not stale postgres URL
-        _fallback_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "railblock.db"))
-        os.environ["DATABASE_URL"] = f"sqlite:///{_fallback_db.replace(os.sep, '/')}"
-        from app.database import get_engine
-        get_engine.cache_clear() if hasattr(get_engine, "cache_clear") else None
+    # Guard: if postgres is explicitly configured (Render), do NOT silently fallback to sqlite — keep postgres mode for diagnostics
+    import os as _os_fb
+    _fb_mode = _os_fb.getenv("DATABASE_MODE", "")
+    _fb_url = _os_fb.getenv("DATABASE_URL", "")
+    _is_pg_configured = _fb_mode.lower() in ("postgres", "postgresql", "pg") or _fb_url.startswith("postgresql://") or _fb_url.startswith("postgres://")
+    if _is_pg_configured:
+        log.error(f"init_db failed with PostgreSQL configured (DATABASE_MODE={_fb_mode}, URL pool), not falling back to SQLite: {e}. Health will report PostgreSQL degraded until DB reachable. Check DATABASE_URL pooled ap-southeast-1 and Supabase pooler.")
+        # Do not switch to sqlite; keep postgres engine — seeding will retry on next request via SessionLocal
+        pass
+    else:
+        log.warning(f"init_db failed, attempting SQLite fallback: {e}")
         try:
-            get_engine()
-        except Exception:
-            pass
-        init_db()
-        log.warning("Degraded to SQLite after init_db failure")
-    except Exception as e2:
-        log.error(f"Fallback init_db also failed: {e2}")
+            import os
+            os.environ["DATABASE_MODE"] = "sqlite"
+            # ensure fallback URL is sqlite, not stale postgres URL
+            _fallback_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "railblock.db"))
+            os.environ["DATABASE_URL"] = f"sqlite:///{_fallback_db.replace(os.sep, '/')}"
+            from app.database import get_engine
+            get_engine.cache_clear() if hasattr(get_engine, "cache_clear") else None
+            try:
+                get_engine()
+            except Exception:
+                pass
+            init_db()
+            log.warning("Degraded to SQLite after init_db failure")
+        except Exception as e2:
+            log.error(f"Fallback init_db also failed: {e2}")
 
 # seed departments and corridors if empty — wrapped so DB unreachable doesn't crash app
 from app.database import SessionLocal

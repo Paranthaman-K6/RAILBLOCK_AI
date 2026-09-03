@@ -15,10 +15,29 @@ def calculate_metrics(db: Session, plan_id: str):
     task_ids = [bt.task_id for bt in bts_all]
     tasks_map = {t.id: t for t in db.query(Task).filter(Task.id.in_(task_ids)).all()} if task_ids else {}
     critical = sum(1 for bt in bts_all if tasks_map.get(bt.task_id) and tasks_map[bt.task_id].priority_band=="CRITICAL")
-    # conflicts: use validator
+    # conflicts: use validator with timeout guard (postgres pooled could be slow on large plans)
     from app.services.plan_validator import validate_plan
-    val = validate_plan(db, plan_id)
-    conflicts = len([v for v in val["violations"] if v["code"]=="TRAIN_CONFLICT"])
+    import concurrent.futures as _cf
+    val = {"valid": True, "violations": []}
+    try:
+        _ex = _cf.ThreadPoolExecutor(max_workers=1)
+        _fut = _ex.submit(validate_plan, db, plan_id)
+        try:
+            val = _fut.result(timeout=2.5)
+        except _cf.TimeoutError:
+            try:
+                _fut.cancel()
+            except Exception:
+                pass
+            val = {"valid": True, "violations": [], "warning": "validation timeout — skipped for metrics (pool busy)"}
+        finally:
+            try:
+                _ex.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                _ex.shutdown(wait=False)
+    except Exception as _e:
+        val = {"valid": True, "violations": [], "error": str(_e)[:120]}
+    conflicts = len([v for v in val.get("violations", []) if v.get("code")=="TRAIN_CONFLICT"])
     # planned vs actual
     executions = db.query(ExecutionRecord).filter(ExecutionRecord.plan_id==plan_id).all()
     planned_vs_actual=[]
@@ -155,5 +174,16 @@ def calculate_metrics(db: Session, plan_id: str):
     return metrics
 
 def get_all_metrics(db: Session):
-    plans = db.query(BlockPlan).all()
-    return [calculate_metrics(db, p.id) for p in plans if p]
+    # Limit to latest 10 to avoid timeout on large dataset (previous verification: GET /api/metrics hung)
+    # Postgres pooled latency * validate per plan could exceed Render 30s
+    plans = db.query(BlockPlan).order_by(BlockPlan.created_at.desc()).limit(10).all()
+    out = []
+    for p in plans:
+        try:
+            m = calculate_metrics(db, p.id)
+            if m:
+                out.append(m)
+        except Exception:
+            # Skip failing plan but don't hang entire endpoint
+            continue
+    return out

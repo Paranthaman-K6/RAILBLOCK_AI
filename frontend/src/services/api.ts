@@ -1,7 +1,12 @@
 import axios from 'axios'
 
+const _viteEnv = ((import.meta as unknown as { env?: Record<string, string> }).env) || (import.meta as unknown as { env: Record<string, string> }).env || {}
+const _rawBase: string = _viteEnv.VITE_API_URL ?? ''
+// Strip trailing slashes so `${baseURL}/health` never becomes `//health`; empty stays same-origin (Render single-image)
+// On Vercel, set VITE_API_URL=https://railblock-ai-up0g.onrender.com (see .env.vercel.example); on Render Docker it stays "" for same-origin
+const _apiBase = _rawBase.replace(/\/+$/, '')
 const api = axios.create({
-  baseURL: (import.meta as unknown as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL || '',
+  baseURL: _apiBase,
   headers: { 'Content-Type': 'application/json' },
 })
 

@@ -1,15 +1,29 @@
 from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.exc import TimeoutError, OperationalError
-from app.database import SessionLocal, get_diagnostics, engine
+from app.database import SessionLocal, get_diagnostics, engine, is_postgres, get_database_mode
 import concurrent.futures
 
 router = APIRouter()
 
+def _fast_diag(reason: str = "pool busy"):
+    """Fallback diagnostics without DB round-trip — reports correct DB type even when pool busy."""
+    pg = is_postgres()
+    mode = get_database_mode()
+    return {
+        "database": "PostgreSQL" if pg else "SQLite",
+        "database_mode": mode,
+        "journal_mode": "n/a (postgres)" if pg else "unknown",
+        "foreign_keys": True if pg else False,
+        "path": "pooled ap-southeast-1" if pg else "railblock.db",
+        "warning": reason,
+    }
+
 @router.get("/health")
 def health():
-    # Non-blocking DB check — avoid Render 502 where pool_timeout 30s > health 5s
+    # Non-blocking DB check — avoid Render 502 where pool_timeout 5s > health 1.9s
     # Use engine.connect() with worker thread timeout <2s, return degraded quickly if pool busy
+    # Always report correct database type (PostgreSQL vs SQLite) even in degraded.
     def _db_check():
         # Use engine.connect() (pool_pre_ping handles stale) with short execution
         with engine.connect() as conn:
@@ -18,10 +32,10 @@ def health():
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     fut = executor.submit(_db_check)
     try:
-        # Enforce <2s wall-clock even if pool_timeout is 30s (Render health 5s)
+        # Enforce <2s wall-clock even if pool_timeout is 5s (Render health 5s)
         fut.result(timeout=1.9)
     except concurrent.futures.TimeoutError:
-        # Do not wait for worker — return degraded quickly (<2s)
+        # Do not wait for worker — return degraded quickly (<2s) but with correct DB label
         try:
             fut.cancel()
         except Exception:
@@ -31,31 +45,60 @@ def health():
         except TypeError:
             # Python <3.9 fallback
             executor.shutdown(wait=False)
-        return {"status": "degraded", "error": "DB pool timeout (health check <2s)", "diagnostics": {"database": "unknown", "journal_mode": "unknown", "warning": "pool busy"}}
+        diag = _fast_diag("pool busy — health check <2s")
+        diag["live_mode"] = False
+        try:
+            from app.config import settings
+            import os
+            lm = bool(getattr(settings, "live_mode", False)) or os.getenv("LIVE_MODE", "").lower() in ("1", "true", "yes", "on")
+            diag["live_mode"] = lm
+            diag["database_mode"] = getattr(settings, "database_mode", diag["database_mode"])
+        except Exception:
+            pass
+        return {"status": "degraded", "error": "DB pool timeout (health check <2s)", "diagnostics": diag}
     except (TimeoutError, OperationalError) as e:
         try:
             executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:
             executor.shutdown(wait=False)
-        return {"status": "degraded", "error": f"DB unavailable: {str(e)[:300]}"}
+        diag = _fast_diag(f"DB unavailable: {str(e)[:120]}")
+        return {"status": "degraded", "error": f"DB unavailable: {str(e)[:300]}", "diagnostics": diag}
     except Exception as e:
         try:
             executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:
             executor.shutdown(wait=False)
-        # Any other DB error -> degraded, not 500, with quick return
-        return {"status": "degraded", "error": str(e)[:300]}
+        # Any other DB error -> degraded, not 500, with quick return but correct DB label
+        diag = _fast_diag(str(e)[:120])
+        return {"status": "degraded", "error": str(e)[:300], "diagnostics": diag}
     else:
         try:
             executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:
             executor.shutdown(wait=False)
 
-    # DB reachable — gather diagnostics
+    # DB reachable — gather diagnostics with timeout so health never hangs on postgres version query
+    diag = None
     try:
-        diag = get_diagnostics()
+        # get_diagnostics itself does a DB connect (SELECT version) which could block pool_timeout; guard with 1.8s
+        inner_ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        inner_fut = inner_ex.submit(get_diagnostics)
+        try:
+            diag = inner_fut.result(timeout=1.8)
+        except concurrent.futures.TimeoutError:
+            try:
+                inner_fut.cancel()
+            except Exception:
+                pass
+            diag = _fast_diag("diagnostics timeout — DB reachable but version query slow")
+        finally:
+            try:
+                inner_ex.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                inner_ex.shutdown(wait=False)
     except Exception as e:
-        diag = {"database": "unknown", "journal_mode": "unknown", "error": str(e)[:200]}
+        diag = _fast_diag(str(e)[:120])
+        diag["error"] = str(e)[:200]
     # Phase 1c: expose live/database mode for ops, keep synthetic_warning
     try:
         from app.config import settings
@@ -77,9 +120,38 @@ def health():
 
 @router.get("/api/diagnostics")
 def diagnostics():
-    """Diagnostic function that reports DB mode - supports SQLite and Postgres."""
+    """Diagnostic function that reports DB mode - supports SQLite and Postgres. Timeout-guarded to avoid hanging on pooled postgres."""
     from app.database import get_diagnostics as gd, get_database_mode
-    d = gd()
+    import concurrent.futures as _cf
+    d = None
+    try:
+        # Guard get_diagnostics with timeout — pooled postgres SELECT version could block pool_timeout
+        _ex = _cf.ThreadPoolExecutor(max_workers=1)
+        _fut = _ex.submit(gd)
+        try:
+            d = _fut.result(timeout=2.0)
+        except _cf.TimeoutError:
+            try:
+                _fut.cancel()
+            except Exception:
+                pass
+            # Fallback without DB round-trip but correct type
+            from app.database import is_postgres as _is_pg
+            pg = _is_pg()
+            d = {"database": "PostgreSQL" if pg else "SQLite", "journal_mode": "n/a (postgres)" if pg else "unknown", "foreign_keys": True if pg else False, "busy_timeout": 0, "path": "pooled ap-southeast-1" if pg else "railblock.db", "warning": "diagnostics timeout — pool busy"}
+        finally:
+            try:
+                _ex.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                _ex.shutdown(wait=False)
+    except Exception as _e:
+        from app.database import is_postgres as _is_pg
+        pg = _is_pg()
+        d = {"database": "PostgreSQL" if pg else "SQLite", "journal_mode": "unknown", "foreign_keys": False, "busy_timeout": 0, "path": "railblock.db", "error": str(_e)[:200]}
+    if d is None:
+        from app.database import is_postgres as _is_pg
+        pg = _is_pg()
+        d = {"database": "PostgreSQL" if pg else "SQLite", "journal_mode": "unknown", "foreign_keys": False, "busy_timeout": 0, "path": "railblock.db"}
     try:
         from app.config import settings
         import os

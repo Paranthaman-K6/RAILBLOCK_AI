@@ -37,6 +37,7 @@ export default function DepartmentPlans(){
   const [notifError, setNotifError]=useState('')
   const [notifLoading, setNotifLoading]=useState(false)
   const [plansError, setPlansError]=useState('')
+  const [viewError, setViewError]=useState('')
 
   const load=useCallback(()=>{
     setPlansError('')
@@ -55,8 +56,14 @@ export default function DepartmentPlans(){
   }
 
   const openView=async (planId:string)=>{
-    const r=await api.get(`/api/plans/${planId}/department-view`, {params:{department:dept}})
-    setView(r.data as DeptView)
+    setViewError('')
+    try{
+      const r=await api.get(`/api/plans/${planId}/department-view`, {params:{department:dept}})
+      setView(r.data as DeptView)
+    }catch(e: unknown){
+      setViewError(formatError(e as never))
+      setView(null)
+    }
   }
 
   const fetchNotifications=async ()=>{
@@ -97,6 +104,7 @@ export default function DepartmentPlans(){
       {plans.length===0? <div className="empty-state">No approved plans <div style={{marginTop:10}}><Link to="/planner" className="btn btn-teal btn-sm">Go to Planner</Link></div></div> : <div className="rb-table-wrap"><table className="rb-table"><thead><tr><th>Plan</th><th>Status</th><th>Action</th></tr></thead><tbody>{plans.map((p)=><tr key={p.plan_id}><td><span className="mono-pill" style={{fontSize:11}}>{p.plan_id}</span></td><td><PlanStatus status={p.status} /></td><td><button onClick={()=>openView(p.plan_id)} className="btn btn-ghost btn-sm">View</button></td></tr>)}</tbody></table></div>}
     </Card>
 
+    {viewError && <div role="alert" style={{color:'#7a1a1a', background:'#ffebee', padding:'10px 12px', marginTop:10, border:'1px solid #ffcdd2', borderRadius:4, fontSize:12.5}}>{viewError}</div>}
     {view && <Card title="" className="" action={<span className="pill pill--count" style={{fontSize:11}}>{view.department}</span>}>
       <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginBottom:8}}>
         <span className="mono-pill">{view.plan_id}</span>

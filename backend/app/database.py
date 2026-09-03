@@ -91,8 +91,8 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL and not is_postgres() else {},
     echo=False,
-    # Postgres production: pool pre-ping + sizing for Supabase 6543/5432 — Render free tuned (timeout < health 5s)
-    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if is_postgres() else {}),
+    # Postgres production: pool pre-ping + sizing for Supabase 6543/5432 — Render free tuned (pool_timeout 5 < health 1.9*? health guards with thread, but 5 reduces queue)
+    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 5} if is_postgres() else {}),
 )
 
 # Enable WAL, FK, busy_timeout for every new DBAPI connection (SQLite only)
@@ -140,7 +140,7 @@ def get_engine():
                 new_url,
                 connect_args={"check_same_thread": False} if "sqlite" in new_url and not want_pg else {},
                 echo=False,
-                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if want_pg else {}),
+                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 5} if want_pg else {}),
             )
             SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     except Exception:
@@ -255,49 +255,96 @@ def init_db():
         pass
 
 def get_diagnostics():
-    """Diagnostic report for API or reset script. Postgres-aware."""
-    # Postgres diagnostics branch
+    """Diagnostic report for API or reset script. Postgres-aware. Timeout-guarded for pooled ap-southeast-1."""
+    # Postgres diagnostics branch — guard version query with timeout so health/diagnostics never hang > pool_timeout
     if is_postgres():
+        # Fast path: if DATABASE_URL still sqlite but mode says postgres, return misconfigured without DB connect
+        if DATABASE_URL.startswith("sqlite"):
+            live = False
+            live_sources = ""
+            try:
+                from app.config import settings
+                import os as _os2
+                live = bool(getattr(settings, "live_mode", False)) or _os2.getenv("LIVE_MODE","").lower() in ("1","true","yes","on")
+                live_sources = getattr(settings, "live_sources", "") or _os2.getenv("LIVE_SOURCES","")
+            except Exception:
+                import os as _os
+                live = _os.getenv("LIVE_MODE", "").lower() in ("1","true","yes","on")
+                live_sources = _os.getenv("LIVE_SOURCES","")
+            return {
+                "database": "PostgreSQL",
+                "journal_mode": "n/a (postgres)",
+                "foreign_keys": False,
+                "busy_timeout": 0,
+                "path": DATABASE_URL,
+                "database_url": DATABASE_URL,
+                "database_mode": "postgres",
+                "live_mode": live,
+                "live_sources": live_sources,
+                "server_version": "unknown — misconfigured",
+                "warning": "DATABASE_MODE=postgres but DATABASE_URL still sqlite — set DATABASE_URL=postgresql://... and restart. Running in degraded sqlite mode.",
+                "misconfigured": True,
+            }
+        # Normal postgres: try version query with short timeout (< pool_timeout) to avoid health hang
+        ver = "PostgreSQL"
         try:
-            with engine.connect() as conn:
-                # Minimal postgres check: server version
-                ver = None
+            import concurrent.futures as _cf
+            def _ver_query():
+                with engine.connect() as conn:
+                    try:
+                        return conn.execute(text("SELECT version()")).scalar()
+                    except Exception:
+                        return "PostgreSQL"
+            _ex = _cf.ThreadPoolExecutor(max_workers=1)
+            _fut = _ex.submit(_ver_query)
+            try:
+                ver = _fut.result(timeout=1.4)
+            except _cf.TimeoutError:
                 try:
-                    ver = conn.execute(text("SELECT version()")).scalar()
+                    _fut.cancel()
                 except Exception:
-                    ver = "PostgreSQL"
-                # live mode for transparency
-                live = False
-                live_sources = ""
+                    pass
+                ver = "PostgreSQL (version query timeout — pool busy)"
+            finally:
                 try:
-                    from app.config import settings
-                    import os as _os2
-                    live = bool(getattr(settings, "live_mode", False)) or _os2.getenv("LIVE_MODE","").lower() in ("1","true","yes","on")
-                    live_sources = getattr(settings, "live_sources", "") or _os2.getenv("LIVE_SOURCES","")
-                except Exception:
-                    import os as _os
-                    live = _os.getenv("LIVE_MODE", "").lower() in ("1","true","yes","on")
-                    live_sources = _os.getenv("LIVE_SOURCES","")
-                # Misconfiguration warning: postgres mode but URL still sqlite
-                warn = None
-                if DATABASE_URL.startswith("sqlite"):
-                    warn = "DATABASE_MODE=postgres but DATABASE_URL still sqlite — set DATABASE_URL=postgresql://... and restart. Running in degraded sqlite mode."
-                diag = {
-                    "database": "PostgreSQL",
-                    "journal_mode": "n/a (postgres)",
-                    "foreign_keys": True,
-                    "busy_timeout": 0,
-                    "path": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
-                    "database_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
-                    "database_mode": "postgres",
-                    "live_mode": live,
-                    "live_sources": live_sources,
-                    "server_version": str(ver)[:120] if ver else "unknown",
-                }
-                if warn:
-                    diag["warning"] = warn
-                    diag["misconfigured"] = True
-                return diag
+                    _ex.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    _ex.shutdown(wait=False)
+        except Exception:
+            ver = "PostgreSQL"
+        try:
+            # live mode for transparency — no DB needed
+            live = False
+            live_sources = ""
+            try:
+                from app.config import settings
+                import os as _os2
+                live = bool(getattr(settings, "live_mode", False)) or _os2.getenv("LIVE_MODE","").lower() in ("1","true","yes","on")
+                live_sources = getattr(settings, "live_sources", "") or _os2.getenv("LIVE_SOURCES","")
+            except Exception:
+                import os as _os
+                live = _os.getenv("LIVE_MODE", "").lower() in ("1","true","yes","on")
+                live_sources = _os.getenv("LIVE_SOURCES","")
+            # Misconfiguration warning already handled above, so not needed here
+            warn = None
+            if DATABASE_URL.startswith("sqlite"):
+                warn = "DATABASE_MODE=postgres but DATABASE_URL still sqlite — set DATABASE_URL=postgresql://... and restart. Running in degraded sqlite mode."
+            diag = {
+                "database": "PostgreSQL",
+                "journal_mode": "n/a (postgres)",
+                "foreign_keys": True,
+                "busy_timeout": 0,
+                "path": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
+                "database_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
+                "database_mode": "postgres",
+                "live_mode": live,
+                "live_sources": live_sources,
+                "server_version": str(ver)[:120] if ver else "unknown",
+            }
+            if warn:
+                diag["warning"] = warn
+                diag["misconfigured"] = True
+            return diag
         except Exception as e:
             return {
                 "database": "PostgreSQL",

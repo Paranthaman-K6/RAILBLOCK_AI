@@ -85,7 +85,7 @@ export default function Layout({ children }: Props) {
             <strong>Prototype disclaimer:</strong> This application uses synthetic demonstration data and prototype operational rules. It does not access live TMS, SMMS, TDMS, COA, timetable, or railway-control systems. It must not be used for real railway operations. Production use would require authorized data integration, railway-domain validation, cybersecurity review, safety approval, and operational certification.
           </div>
           <div style={{ marginTop: 6 }}>
-            RailBlock AI — Human-approved planning and decision-support prototype. Synthetic prototype windows, not official railway availability. SQLite WAL only. No live railway APIs.
+            RailBlock AI — Human-approved planning and decision-support prototype. Synthetic prototype windows, not official railway availability. PostgreSQL (Render) / SQLite WAL (local) — pooled ap-southeast-1. No live railway APIs.
           </div>
         </footer>
       </div>

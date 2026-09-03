@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { useEffect, useState, useMemo } from 'react'
 import { DEPARTMENTS, DEPARTMENT_LABELS } from '../constants/departments'
+import api from '../services/api'
 import {
   IconDashboard, IconImport, IconTasks, IconPlanner, IconDepartments, IconExecution,
   IconMetrics, IconCorridors, IconTrains, IconConflicts, IconOptimizer,
@@ -84,8 +85,6 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     let cancelled = false
     const fetchMeta = async () => {
       try {
-        const mod = await import('../services/api')
-        const api = mod.default
         const results = await Promise.allSettled([
           api.get('/health'),
           api.get('/api/tasks?limit=1'),
@@ -95,7 +94,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         if (cancelled) return
         if (results[0].status === 'fulfilled') {
           const h: any = (results[0] as any).value.data
-          setHealthOk(h?.diagnostics?.journal_mode === 'wal')
+          const isPostgres = h?.diagnostics?.database === 'PostgreSQL' || h?.diagnostics?.database_mode === 'postgres' || h?.database === 'PostgreSQL'
+          const isWal = h?.diagnostics?.journal_mode === 'wal'
+          setHealthOk(h?.status === 'ok' && (isPostgres || isWal))
         } else setHealthOk(false)
         const c: typeof counts = {}
         if (results[1].status === 'fulfilled') {
@@ -222,9 +223,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
             {!collapsed && <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.7 }}>30s refresh</span>}
           </div>
 
-          <div className="sidebar-health" title={healthOk === null ? 'Checking health...' : healthOk ? 'Health OK · WAL' : 'Health degraded'}>
+          <div className="sidebar-health" title={healthOk === null ? 'Checking health...' : healthOk ? 'Health OK · PostgreSQL/SQLite' : 'Health degraded'}>
             <span className="sidebar-health-dot" style={{ background: healthOk === null ? '#8896a8' : healthOk ? '#4caf50' : '#ff9800', boxShadow: healthOk ? '0 0 0 4px rgba(76,175,80,0.18)' : 'none' }} aria-hidden />
-            <span>{healthOk === null ? 'Checking…' : healthOk ? 'WAL · Healthy' : 'Degraded'}</span>
+            <span>{healthOk === null ? 'Checking…' : healthOk ? 'Healthy · PostgreSQL/SQLite' : 'Degraded'}</span>
           </div>
         </div>
       </aside>

@@ -18,10 +18,13 @@ export default function Execution(){
   useEffect(()=>{api.get('/api/plans').then(r=>setPlans(r.data as BlockPlan[]))},[])
   const loadBlocks=useCallback(async ()=>{
     if(!selectedPlan) return
-    const r=await api.get(`/api/plans/${selectedPlan}`)
-    const data = r.data as { blocks: Block[]; status: string }
-    setBlocks(data.blocks)
-    setPlanStatus(data.status)
+    setErr('')
+    try{
+      const r=await api.get(`/api/plans/${selectedPlan}`)
+      const data = r.data as { blocks: Block[]; status: string }
+      setBlocks(Array.isArray(data.blocks) ? data.blocks : [])
+      setPlanStatus(data.status || '')
+    }catch(e:unknown){ setErr(formatError(e)); setBlocks([]) }
   }, [selectedPlan])
   const handleDeptChange=(v:string)=>{
     setDept(v)
@@ -33,8 +36,10 @@ export default function Execution(){
   const execute=async (blk: Block, mode:'COMPLETED'|'PARTIALLY_COMPLETED'|'CANCELLED')=>{
     setErr(''); setMsg('')
     try{
-      const allTasks = (blk.tasks||[]).map((t)=> t.task_id)
-      const deptTasks = (blk.tasks||[]).filter((t)=> (t.department||'').toUpperCase()===dept.toUpperCase()).map((t)=>t.task_id)
+      const getTaskId = (t: unknown)=> typeof t === 'string' ? t : ((t as { task_id?: string; id?: string })?.task_id || (t as { id?: string })?.id || '')
+      const getDept = (t: unknown)=> typeof t === 'string' ? '' : ((t as { department?: string })?.department || '')
+      const allTasks = (blk.tasks||[]).map(getTaskId).filter(Boolean) as string[]
+      const deptTasks = (blk.tasks||[]).filter((t)=> getDept(t).toUpperCase()===dept.toUpperCase()).map(getTaskId).filter(Boolean) as string[]
       const targetTasks = deptTasks.length ? deptTasks : allTasks
       const payload={
         actual_start: blk.start_time,
@@ -65,10 +70,10 @@ export default function Execution(){
     try{ await api.post(`/api/blocks/WND-TEST1234/execution`, {actual_start:60, actual_end:120, status:'COMPLETED', completed_task_ids:[], recorded_by:'x'} )}catch(e:unknown){setErr('WND rejection → '+formatError(e))}
   }
 
-  const filtered = blocks.filter((b)=>{
+   const filtered = blocks.filter((b)=>{
     if(!dept) return true
     if(dept==='CONTROL_OFFICE' || dept==='ADMIN') return true
-    const hasDept = (b.tasks||[]).some((t)=> (t.department||'').toUpperCase()===dept.toUpperCase())
+    const hasDept = (b.tasks||[]).some((t)=> typeof t !== 'string' && ((t as { department?: string }).department||'').toUpperCase()===dept.toUpperCase())
     if(b.department && b.department.toUpperCase().includes(dept.toUpperCase())) return true
     return hasDept
   })
@@ -125,7 +130,13 @@ export default function Execution(){
             {isCompleted && <span className="pill pill--amber" style={{fontSize:11}}>🔒 Locked</span>}
           </div>
           <div className="mono" style={{fontSize:11, color:'var(--text-secondary)', marginTop:8, lineHeight:1.4, wordBreak:'break-word', background:'#f8fafb', padding:'6px 8px', borderRadius:4, border:'1px solid #eef2f6'}}>
-            Tasks ({(b.tasks||[]).length}): {(b.tasks||[]).map((t)=> `${t.task_id} (${t.department||b.department||''})=${t.status||''}`).join(', ') || '—'}
+            Tasks ({(b.tasks||[]).length}): {(b.tasks||[]).map((t: unknown)=>{
+              if(t == null) return ''
+              if(typeof t === 'string') return t
+              const o = t as { task_id?: string; id?: string; department?: string; status?: string }
+              const id = o.task_id || o.id || ''
+              return `${id} (${o.department||b.department||''})=${o.status||''}`
+            }).filter(Boolean).join(', ') || '—'}
           </div>
           <div style={{marginTop:10, display:'flex', gap:6, flexWrap:'wrap'}}>
             <button onClick={()=>execute(b,'COMPLETED')} disabled={isCompleted} className="btn btn-green btn-sm">✓ Record COMPLETED ({dept})</button>

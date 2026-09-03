@@ -15,7 +15,26 @@ interface DashboardStats {
 }
 
 interface HealthData {
-  diagnostics?: { journal_mode?: string; path?: string; foreign_keys?: boolean }
+  status?: string
+  diagnostics?: {
+    database?: string
+    database_mode?: string
+    journal_mode?: string
+    path?: string
+    database_url?: string
+    foreign_keys?: boolean
+    server_version?: string
+    busy_timeout?: number
+    live_mode?: boolean
+    warning?: string
+  }
+  // flat shape from GET /api/diagnostics (no diagnostics wrapper)
+  database?: string
+  database_mode?: string
+  journal_mode?: string
+  path?: string
+  foreign_keys?: boolean
+  server_version?: string
   [key: string]: unknown
 }
 
@@ -94,8 +113,39 @@ export default function Dashboard(){
 
   useEffect(()=>{ load(); const id=setInterval(load, 30000); return ()=>clearInterval(id)},[load])
 
-  const healthColor = useMemo(()=> health?.diagnostics?.journal_mode==='wal' ? '#4caf50' : '#ff9800', [health])
-  const healthHealthy = health?.diagnostics?.journal_mode==='wal' && health?.diagnostics?.foreign_keys
+  // Robust diagnostics extraction: handles both GET /health {diagnostics:{database}} and GET /api/diagnostics {database} flat
+  const diagnostics = useMemo(() => {
+    if (!health) return null
+    if (health.diagnostics && typeof health.diagnostics === 'object') return health.diagnostics as NonNullable<HealthData['diagnostics']>
+    if (health.database || health.database_mode || health.journal_mode) {
+      return health as unknown as NonNullable<HealthData['diagnostics']>
+    }
+    return null
+  }, [health])
+
+  const databaseLabel = useMemo(() => {
+    if (!diagnostics && !health) return null
+    const raw = (diagnostics?.database || (health as HealthData)?.database || '') as string
+    const mode = (diagnostics?.database_mode || (health as HealthData)?.database_mode || '') as string
+    if (raw) return raw
+    if (mode) return mode.toLowerCase() === 'postgres' ? 'PostgreSQL' : mode
+    if (diagnostics?.journal_mode === 'wal') return 'SQLite'
+    return null
+  }, [diagnostics, health])
+
+  const isPostgres = useMemo(() => (databaseLabel || '').toLowerCase().includes('postgres'), [databaseLabel])
+  const isSqlite = useMemo(() => (databaseLabel || '').toLowerCase().includes('sqlite'), [databaseLabel])
+
+  const healthColor = useMemo(()=> {
+    if (isPostgres && diagnostics?.foreign_keys) return '#4caf50'
+    if (diagnostics?.journal_mode==='wal' && diagnostics?.foreign_keys) return '#4caf50'
+    if (health?.status==='ok' && diagnostics) return '#4caf50'
+    return '#ff9800'
+  }, [diagnostics, isPostgres, health])
+  const healthHealthy = useMemo(()=> {
+    if (isPostgres) return !!diagnostics?.foreign_keys || health?.status==='ok'
+    return diagnostics?.journal_mode==='wal' && !!diagnostics?.foreign_keys
+  }, [diagnostics, isPostgres, health])
   const latestApproved = useMemo(()=> plans.find((p)=>['APPROVED','PUBLISHED'].includes(p.status)), [plans])
 
   const baselineVsOptData = useMemo(()=>{
@@ -122,23 +172,25 @@ export default function Dashboard(){
       {/* Health & DB */}
       <div className="rb-card rb-card--accent">
         <h3 className="rb-card-title">Health &amp; DB</h3>
-        <div className="rb-card-desc">SQLite WAL · Prototype diagnostics</div>
+        <div className="rb-card-desc">{databaseLabel ? `${databaseLabel}${isPostgres ? ' · pooled ap-southeast-1' : ''} · Prototype diagnostics` : 'Prototype diagnostics'} · {diagnostics?.database_mode || (isPostgres ? 'postgres' : isSqlite ? 'sqlite' : '—')}</div>
         <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
           <span style={{width:10,height:10,background:healthColor,borderRadius:'50%',display:'inline-block',flexShrink:0,boxShadow:`0 0 0 4px ${healthColor}22`}} aria-hidden />
           <span className="pill" style={{background: healthHealthy ? '#e8f5e9' : '#fff3e0', color: healthHealthy ? '#1b5e20' : '#7a3e00', borderColor: healthHealthy ? '#c8e6c9' : '#ffe0b2'}}>
-            {health ? (healthHealthy ? 'Healthy · WAL' : 'Degraded') : (loading ? 'Checking…' : 'Unreachable')}
+            {health ? (healthHealthy ? (isPostgres ? 'Healthy · PostgreSQL' : isSqlite ? 'Healthy · WAL' : 'Healthy') : 'Degraded') : (loading ? 'Checking…' : 'Unreachable')}
           </span>
-          {health?.diagnostics?.journal_mode && <span className="mono-pill" style={{fontSize:10.5}}>journal_mode: {health.diagnostics.journal_mode}</span>}
-          {typeof health?.diagnostics?.foreign_keys === 'boolean' && <span className="mono-pill" style={{fontSize:10.5}}>fk: {String(health.diagnostics.foreign_keys)}</span>}
+          {databaseLabel && <span className="mono-pill" style={{fontSize:10.5, background: isPostgres ? '#e8f5e9' : undefined, borderColor: isPostgres ? '#c8e6c9' : undefined}}>database: {databaseLabel}</span>}
+          {diagnostics?.journal_mode && <span className="mono-pill" style={{fontSize:10.5}}>journal_mode: {diagnostics.journal_mode}</span>}
+          {typeof diagnostics?.foreign_keys === 'boolean' && <span className="mono-pill" style={{fontSize:10.5}}>fk: {String(diagnostics.foreign_keys)}</span>}
+          {diagnostics?.server_version && <span className="mono-pill" style={{fontSize:10.5, maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={diagnostics.server_version}>{diagnostics.server_version.split(',')[0]}</span>}
         </div>
-        {health?.diagnostics?.path && (
+        {diagnostics?.path && (
           <div style={{marginTop:8}}>
-            <span className="mono-pill mono-pill--teal" title={health.diagnostics.path as string} style={{display:'inline-block',maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',verticalAlign:'middle'}}>
-              {(health.diagnostics.path as string).replace(/^[A-Za-z]:[\\/][^:]*railblock\.db$/,'railblock.db')}
+            <span className="mono-pill mono-pill--teal" title={diagnostics.path as string} style={{display:'inline-block',maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',verticalAlign:'middle'}}>
+              {(diagnostics.path as string).replace(/^[A-Za-z]:[\\/][^:]*railblock\.db$/,'railblock.db')}
             </span>
           </div>
         )}
-        {health?.diagnostics ? (
+        {diagnostics ? (
           <details style={{marginTop:10, background:'#f8fafb', border:'1px solid #eef2f6', borderRadius:4, padding:'6px 8px'}}>
             <summary style={{fontSize:11.5, fontWeight:700, cursor:'pointer', color:'var(--text-secondary)', letterSpacing:0.2}}>Diagnostics</summary>
             <pre className="mono" style={{fontSize:11, lineHeight:1.4, maxHeight:200, overflow:'auto', margin:'8px 0 0', background:'white', border:'1px solid #e0e6ed', borderRadius:4, padding:8}}>{JSON.stringify(health, null, 2)}</pre>
@@ -146,7 +198,7 @@ export default function Dashboard(){
         ) : (
           <div style={{marginTop:10, fontSize:11.5, color:'var(--text-muted)'}}>{loading ? 'Awaiting diagnostics…' : 'No diagnostics — Check /health'}</div>
         )}
-        <div style={{fontSize:10.5, color:'var(--text-muted)', marginTop:8, lineHeight:1.4}}>SQLite WAL only · No live railway APIs · Checks: health, diagnostics, tasks, windows, plans, metrics</div>
+        <div style={{fontSize:10.5, color:'var(--text-muted)', marginTop:8, lineHeight:1.4}}>{isPostgres ? 'PostgreSQL 17.6 pooled (Render/Supabase) · ' : isSqlite ? 'SQLite WAL · ' : ''}No live railway APIs · Checks: health, diagnostics, tasks, windows, plans, metrics</div>
       </div>
 
       {/* Live Counts */}
