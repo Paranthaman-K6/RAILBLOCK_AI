@@ -144,7 +144,7 @@ def generate_candidate_groups(db: Session, tasks, windows, horizon_start=None, h
                             break
                     if not all_fit:
                         continue
-                    ok, reasons = grouping_compatible_tasks(list(combo), w, db=db)
+                    ok, reasons = grouping_compatible_tasks(list(combo), w, db=db, res_map=res_map)
                     if ok:
                         feasible_windows.append(w)
                 if not feasible_windows:
@@ -154,7 +154,7 @@ def generate_candidate_groups(db: Session, tasks, windows, horizon_start=None, h
                     continue
                 seen_group_keys.add(task_ids)
                 w0 = feasible_windows[0]
-                ok, reasons = grouping_compatible_tasks(list(combo), w0, db=db)
+                ok, reasons = grouping_compatible_tasks(list(combo), w0, db=db, res_map=res_map)
                 corridor_id = combo[0].corridor_id
                 section_id = bucket_key[1]
                 line_id = bucket_key[2]

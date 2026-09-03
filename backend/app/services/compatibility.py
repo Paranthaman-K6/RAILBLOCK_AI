@@ -70,7 +70,7 @@ def check_task_window_fit(task, window, train_movements=None, goods=None, resour
         return "SOFT_RISK", "Goods forecast medium risk"
     return "FEASIBLE", "OK"
 
-def grouping_compatible_tasks(tasks: List, window, max_duration=240, db=None):
+def grouping_compatible_tasks(tasks: List, window, max_duration=240, db=None, res_map=None):
     # tasks is list of Task objects
     if not tasks: return True, []
     total = sum(t.estimated_duration_minutes + t.setup_duration_minutes for t in tasks)
@@ -82,17 +82,26 @@ def grouping_compatible_tasks(tasks: List, window, max_duration=240, db=None):
             res = check_compatible(tasks[i], tasks[j], max_duration)
             if not res["compatible"]:
                 return False, res["reasons"]
-    # resource overlap check via DB if db provided
-    if db and len(tasks)>1:
-        from app.models import ResourceAvailability
-        # naive: if two tasks share same resource, conflict
-        # get task_resources
-        from sqlalchemy import text
-        # query association
-        task_ids = [t.id for t in tasks]
-        # check if any resource assigned to multiple tasks
-        # Use raw query
-        rows = db.execute(text("SELECT resource_id, COUNT(*) c FROM task_resources WHERE task_id IN ('" + "','".join(task_ids) + "') GROUP BY resource_id HAVING c>1")).fetchall() if task_ids else []
-        if rows:
-            return False, ["Resource overlap: shared resource " + str(rows[0][0])]
+    # resource overlap check
+    if len(tasks) > 1:
+        # Prefer in-memory res_map if provided (postgres-optimized, avoids N+1 query)
+        if res_map is not None:
+            seen = {}
+            for t in tasks:
+                for rid in res_map.get(t.id, set()):
+                    if rid in seen:
+                        return False, ["Resource overlap: shared resource " + str(rid)]
+                    seen[rid] = t.id
+            # Also need to check cross-task overlap (above only checks first duplicate per rid, but we need any shared)
+            # More precise: check pairwise share
+            for i in range(len(tasks)):
+                for j in range(i+1, len(tasks)):
+                    if res_map.get(tasks[i].id, set()) & res_map.get(tasks[j].id, set()):
+                        return False, ["Resource overlap: shared resource " + str((res_map.get(tasks[i].id, set()) & res_map.get(tasks[j].id, set())).pop())]
+        elif db:
+            from sqlalchemy import text
+            task_ids = [t.id for t in tasks]
+            rows = db.execute(text("SELECT resource_id, COUNT(*) FROM task_resources WHERE task_id IN ('" + "','".join(task_ids) + "') GROUP BY resource_id HAVING COUNT(*) > 1")).fetchall() if task_ids else []
+            if rows:
+                return False, ["Resource overlap: shared resource " + str(rows[0][0])]
     return True, []
