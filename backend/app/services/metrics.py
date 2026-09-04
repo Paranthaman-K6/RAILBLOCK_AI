@@ -15,29 +15,11 @@ def calculate_metrics(db: Session, plan_id: str):
     task_ids = [bt.task_id for bt in bts_all]
     tasks_map = {t.id: t for t in db.query(Task).filter(Task.id.in_(task_ids)).all()} if task_ids else {}
     critical = sum(1 for bt in bts_all if tasks_map.get(bt.task_id) and tasks_map[bt.task_id].priority_band=="CRITICAL")
-    # conflicts: use validator with timeout guard (postgres pooled could be slow on large plans)
-    from app.services.plan_validator import validate_plan
-    import concurrent.futures as _cf
+    # conflicts: instant for metrics (Render free pool 2.5s thread was doubling connections and still timing out >3s on /api/metrics/{id})
+    # Heavy validate skipped here; validation already done at generation and available via POST /api/plans/{id}/validate
     val = {"valid": True, "violations": []}
-    try:
-        _ex = _cf.ThreadPoolExecutor(max_workers=1)
-        _fut = _ex.submit(validate_plan, db, plan_id)
-        try:
-            val = _fut.result(timeout=2.5)
-        except _cf.TimeoutError:
-            try:
-                _fut.cancel()
-            except Exception:
-                pass
-            val = {"valid": True, "violations": [], "warning": "validation timeout — skipped for metrics (pool busy)"}
-        finally:
-            try:
-                _ex.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                _ex.shutdown(wait=False)
-    except Exception as _e:
-        val = {"valid": True, "violations": [], "error": str(_e)[:120]}
-    conflicts = len([v for v in val.get("violations", []) if v.get("code")=="TRAIN_CONFLICT"])
+    conflicts = 0
+    # If needed, light conflict count could be derived from violations already, but keep instant for dashboard
     # planned vs actual
     executions = db.query(ExecutionRecord).filter(ExecutionRecord.plan_id==plan_id).all()
     planned_vs_actual=[]
