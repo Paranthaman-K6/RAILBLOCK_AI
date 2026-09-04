@@ -156,9 +156,8 @@ def calculate_metrics(db: Session, plan_id: str):
     return metrics
 
 def get_all_metrics(db: Session):
-    # Limit to latest 10 to avoid timeout on large dataset (previous verification: GET /api/metrics hung)
-    # Postgres pooled latency * validate per plan could exceed Render 30s
-    plans = db.query(BlockPlan).order_by(BlockPlan.created_at.desc()).limit(10).all()
+    # Limit to latest 3 to avoid Render free 18s timeout (10*calculate heavy >15s). Instant validate already, but still heavy per plan (asset calc).
+    plans = db.query(BlockPlan).order_by(BlockPlan.created_at.desc()).limit(3).all()
     out = []
     for p in plans:
         try:
@@ -166,6 +165,5 @@ def get_all_metrics(db: Session):
             if m:
                 out.append(m)
         except Exception:
-            # Skip failing plan but don't hang entire endpoint
             continue
     return out
