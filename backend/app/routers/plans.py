@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import BlockPlan, Block, BlockTask, Task, CandidateWindow
@@ -302,6 +302,53 @@ def submit_review(plan_id: str, db: Session = Depends(get_db)):
     db.add(AuditEvent(action="SUBMIT_REVIEW", entity_type="BlockPlan", entity_id=plan.id, user_id="demo_user", details=json.dumps({})))
     db.commit()
     return {"plan_id": plan.id, "status": plan.status}
+
+# Delete single draft plan (DRAFT only, CONTROL_OFFICE/ADMIN)
+@router.delete("/{plan_id}")
+def delete_plan_endpoint(plan_id: str, request: Request, payload: dict = Body(None), db: Session = Depends(get_db)):
+    # Resolve actor from body or headers (X-Department) or default VIEWER
+    body = payload or {}
+    # FastAPI DELETE with empty body gives None
+    try:
+        raw = body if isinstance(body, dict) else {}
+    except: raw = {}
+    approver_id = raw.get("approver_id") or raw.get("user_id") or request.headers.get("X-User-Id") or request.headers.get("x-user-id") or "demo_user"
+    approver_role = raw.get("approver_role") or raw.get("role") or raw.get("department") or request.headers.get("X-Department") or request.headers.get("x-department") or request.headers.get("X-Role") or "VIEWER"
+    approver_id = str(approver_id).strip() if approver_id else ""
+    approver_role = str(approver_role).strip().upper() if approver_role else "VIEWER"
+    if not approver_id:
+        raise HTTPException(status_code=401, detail="Approver identity required")
+    if not approver_role:
+        raise HTTPException(status_code=401, detail="Approver role required")
+    from app.services.plans_delete import delete_draft_plan
+    plan, msg, code = delete_draft_plan(db, plan_id, approver_id, approver_role)
+    if code != 200:
+        raise HTTPException(status_code=code, detail=msg)
+    return {"plan_id": plan_id.upper(), "status": "DELETED", "message": msg}
+
+@router.post("/bulk-delete")
+def bulk_delete_endpoint(payload: dict = Body(...), request: Request = None, db: Session = Depends(get_db)):
+    if not payload or not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="plan_ids required")
+    plan_ids = payload.get("plan_ids") or payload.get("ids") or []
+    if not isinstance(plan_ids, list) or not plan_ids:
+        raise HTTPException(status_code=400, detail="plan_ids must be non-empty list")
+    approver_id = payload.get("approver_id") or payload.get("user_id") or (request.headers.get("X-User-Id") if request else None) or "demo_user"
+    approver_role = payload.get("approver_role") or payload.get("role") or payload.get("department") or (request.headers.get("X-Department") if request else None) or "VIEWER"
+    approver_id = str(approver_id).strip()
+    approver_role = str(approver_role).strip().upper()
+    if not approver_id or not approver_role:
+        raise HTTPException(status_code=401, detail="Approver identity/role required")
+    from app.services.plans_delete import bulk_delete_drafts
+    result, msg, code = bulk_delete_drafts(db, plan_ids, approver_id, approver_role)
+    # 200 all ok, 207 partial, 400/403/404 etc
+    if code in (400, 403, 404):
+        raise HTTPException(status_code=code, detail=msg)
+    # For 207 partial, return 207 status
+    from fastapi.responses import JSONResponse
+    if code == 207:
+        return JSONResponse(status_code=207, content={**result, "message": msg})
+    return {**result, "message": msg}
 
 # additional endpoint POST /api/optimize alias
 @router.post("/../optimize")

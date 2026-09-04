@@ -51,6 +51,8 @@ export const recordExecution = (blockId: string, payload: Record<string, unknown
 export const getMetrics = (planId?: string) => (planId ? api.get(`/api/metrics/${planId}`) : api.get('/api/metrics'))
 export const getWindows = (params?: Record<string, unknown>) => api.get('/api/windows', { params })
 export const detectConflicts = (payload: Record<string, unknown>) => api.post('/api/conflicts/detect', payload)
+export const deletePlan = (planId: string, actor?: Record<string, unknown>) => api.delete(`/api/plans/${planId}`, { data: actor || {} })
+export const bulkDeletePlans = (planIds: string[], actor?: Record<string, unknown>) => api.post('/api/plans/bulk-delete', { plan_ids: planIds, ...(actor || {}) })
 export const importFile = (url: string, file: File, source: string) => {
   const fd = new FormData()
   fd.append('file', file)

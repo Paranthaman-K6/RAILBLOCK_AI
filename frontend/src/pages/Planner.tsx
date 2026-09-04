@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
 import Gantt from '../components/Gantt'
@@ -19,7 +19,14 @@ export default function Planner(){
   const [error, setError]=useState('')
   const [loading, setLoading]=useState(false)
   const [approveDept, setApproveDept]=useState<string>('CONTROL_OFFICE')
-  // Plans list: GET /api/plans returns all including DRAFT; View must handle DRAFT reliably
+  const [selectedIds, setSelectedIds]=useState<Set<string>>(new Set())
+  const [filterStatus, setFilterStatus]=useState<string>('All')
+  const [deleting, setDeleting]=useState<string | null>(null)
+  const [bulkDeleting, setBulkDeleting]=useState(false)
+
+  const dept = (()=>{ try{return localStorage.getItem('department')||'VIEWER'}catch{return 'VIEWER'}})()
+  const canDelete = dept==='ADMIN' || dept==='CONTROL_OFFICE'
+
   const load=()=> api.get('/api/plans').then(r=>setPlans(r.data as BlockPlan[])).catch(e=>{
     const msg = formatError(e)
     const status = (e as { response?: { status?: number } })?.response?.status
@@ -36,6 +43,43 @@ export default function Planner(){
     setSelected(null)
     setError('')
   },[mode])
+
+  const filteredPlans = useMemo(()=>{
+    if(filterStatus==='All') return plans
+    return plans.filter(p=>p.status===filterStatus)
+  },[plans, filterStatus])
+
+  const visible = filteredPlans.slice(0,20)
+  const draftVisible = visible.filter(p=>p.status==='DRAFT')
+  const allDraftSelected = draftVisible.length>0 && draftVisible.every(p=>selectedIds.has(p.plan_id))
+
+  const toggle=(id:string)=>{
+    setSelectedIds(prev=>{
+      const n=new Set(prev)
+      if(n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+  const selectAllDraft=()=>{
+    setSelectedIds(prev=>{
+      const n=new Set(prev)
+      draftVisible.forEach(p=>n.add(p.plan_id))
+      return n
+    })
+  }
+  const selectAll=()=>{
+    setSelectedIds(prev=>{
+      const n=new Set(prev)
+      visible.forEach(p=>n.add(p.plan_id))
+      return n
+    })
+  }
+  const clearAll=()=> setSelectedIds(new Set())
+  const selectAll43=()=>{
+    const allDraft = filteredPlans.filter(p=>p.status==='DRAFT')
+    setSelectedIds(new Set(allDraft.map(p=>p.plan_id)))
+  }
+
    const generate=async ()=>{
     setError('')
     setLoading(true)
@@ -49,7 +93,6 @@ export default function Planner(){
           const full = await api.get(`/api/plans/${pid}`)
           setSelected(full.data as typeof selected)
         }catch(e:unknown){
-          // fallback to generation response even if view fetch fails (e.g. 504 transient)
           const msg = formatError(e as Error)
           const st = (e as { response?: { status?: number } })?.response?.status
           if(st===504 || st===500){
@@ -109,14 +152,65 @@ export default function Planner(){
   const reject=async ()=>{
     if(!selected) return
     const pid = (selected.plan_id || '').toUpperCase()
-    // TODO: replace window.prompt with dialog component (rb-dialog)
     const reason=window.prompt('Rejection reason? (required)')
     if(!reason) return
     try{ await api.post(`/api/plans/${pid}/reject`, {reason, approver_id:'officer1'}); await loadPlan(pid); await load()}catch(e:unknown){setError(formatError(e as Error))}
   }
+  const handleDeleteSingle=async (planId:string)=>{
+    const p = plans.find(x=>x.plan_id===planId)
+    if(!p){ setError('Plan not found'); return }
+    if(p.status!=='DRAFT'){ setError(`Only DRAFT can be deleted (current: ${p.status})`); return }
+    if(!canDelete){ setError('Forbidden — requires CONTROL_OFFICE or ADMIN'); return }
+    if(!window.confirm(`Delete ${p.plan_id}? ${p.horizon_type} ${p.start_date}→${p.end_date}. This removes its blocks and cannot be undone.`)) return
+    setDeleting(planId)
+    setError('')
+    try{
+      const actor={approver_id: (dept.toLowerCase()+'_officer'), approver_role: dept}
+      await api.delete(`/api/plans/${planId}`, { data: actor } as unknown as { data: unknown })
+      if(selected?.plan_id===planId) setSelected(null)
+      setSelectedIds(prev=>{ const n=new Set(prev); n.delete(planId); return n })
+      await load()
+    }catch(e:unknown){ setError(formatError(e as Error)) } finally{ setDeleting(null) }
+  }
+  const handleBulkDelete=async ()=>{
+    const ids=[...selectedIds]
+    if(ids.length===0){ setError('No plans selected'); return }
+    if(!canDelete){ setError('Forbidden — requires CONTROL_OFFICE or ADMIN'); return }
+    const draftIds=ids.filter(id=> plans.find(p=>p.plan_id===id)?.status==='DRAFT')
+    const nonDraft = ids.length - draftIds.length
+    if(draftIds.length===0){ setError('No DRAFT selected — only DRAFT can be deleted'); return }
+    let msg=`Delete ${draftIds.length} DRAFT plan(s)?\n${draftIds.join(', ')}`
+    if(nonDraft>0) msg+=`\n\n${nonDraft} non-DRAFT will be skipped (immutable).`
+    msg+='\n\nThis cannot be undone.'
+    if(!window.confirm(msg)) return
+    setBulkDeleting(true)
+    setError('')
+    try{
+      const actor={approver_id: dept.toLowerCase()+'_officer', approver_role: dept}
+      const r=await api.post('/api/plans/bulk-delete', { plan_ids: draftIds, ...actor })
+      const data=r.data as {deleted?:string[], failed?:{id:string,reason:string}[], deleted_count?:number}
+      if(selected && draftIds.includes(selected.plan_id)) setSelected(null)
+      setSelectedIds(new Set())
+      await load()
+      const failed=data.failed||[]
+      if(failed.length>0){
+        setError(`Deleted ${data.deleted?.length||0}, skipped ${failed.length}: ${failed.map(f=>`${f.id}(${f.reason})`).join(', ')}`)
+      }
+    }catch(e:unknown){
+      const st=(e as {response?:{status?:number}})?.response?.status
+      const d=(e as {response?:{data?:{detail?:string}}})?.response?.data?.detail
+      if(st===207){
+        // partial success still handled above, but fallback
+        setError(formatError(e as Error))
+        await load()
+        setSelectedIds(new Set())
+      } else {
+        setError(d ? String(d) : formatError(e as Error))
+      }
+    } finally{ setBulkDeleting(false) }
+  }
   const editBlock=async (blk: Block)=>{
     if(!selected || selected.status!=='DRAFT'){ setError('Approved and published plans are immutable. Create revision.'); return }
-    // TODO: replace window.prompt with dialog component (rb-dialog) + date validation
     const newDate=window.prompt('New service_date YYYY-MM-DD', blk.service_date)
     if(!newDate) return
     if(!/^\d{4}-\d{2}-\d{2}$/.test(newDate)){ setError('Invalid date format — use YYYY-MM-DD'); return }
@@ -179,15 +273,44 @@ export default function Planner(){
       {error && <div role="alert" style={{color:'#7a1a1a', background:'#fef2f2', padding:'10px 12px', marginTop:10, border:'1px solid #fecaca', borderRadius:4, fontSize:12.5, lineHeight:1.4, wordBreak:'break-word'}}>{error}</div>}
       <div style={{fontSize:11, color:'var(--text-muted)', marginTop:8, lineHeight:1.4}}>Weekly (2026-09-01→07) → Monthly (→30) → Daily (single day, emergency). No data → 400. Train/Goods hard → no assignment. Solver never auto-publishes; requires human approval.</div>
     </div>
-    <Card title="Plans" className="" action={<span className="pill pill--count" style={{fontSize:11}}>{plans.length} total</span>}>
-      <div className="rb-card-desc" style={{marginTop:-2}}>Unambiguous Status · Click View to inspect</div>
-      {plans.length===0 ? <div className="empty-state">No plans — generate weekly/monthly/daily above.</div> :
+    <Card title="Plans" className="" action={<span className="pill pill--count" style={{fontSize:11}}>{filteredPlans.length} / {plans.length} total</span>}>
+      <div className="rb-card-desc" style={{marginTop:-2}}>Unambiguous Status · Click View to inspect · Select DRAFT to delete</div>
+      <div style={{display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', margin:'10px 0 8px'}}>
+        <select value={filterStatus} onChange={e=>{setFilterStatus(e.target.value); setSelectedIds(new Set())}} className="rb-select" style={{height:30, fontSize:12}}>
+          <option value="All">All</option>
+          <option value="DRAFT">DRAFT</option>
+          <option value="UNDER_REVIEW">UNDER_REVIEW</option>
+          <option value="APPROVED">APPROVED</option>
+          <option value="PUBLISHED">PUBLISHED</option>
+        </select>
+        <button onClick={selectAllDraft} disabled={draftVisible.length===0} className="btn btn-ghost btn-sm" title="Select all visible DRAFT (max 20)">Select All DRAFT</button>
+        <button onClick={selectAll} disabled={visible.length===0} className="btn btn-ghost btn-sm" title="Select all visible (non-DRAFT will be skipped on delete)">Select All</button>
+        <button onClick={clearAll} disabled={selectedIds.size===0} className="btn btn-ghost btn-sm">Clear</button>
+        <span className="pill pill--muted" style={{fontSize:11}}>{selectedIds.size} selected</span>
+        <button onClick={handleBulkDelete} disabled={selectedIds.size===0 || bulkDeleting || !canDelete} className="btn btn-sm" style={{background: selectedIds.size? '#ffebee':'#f5f5f5', border:'1px solid #ffcdd2', color: selectedIds.size?'#7a1a1a':'#999', fontWeight:700}} title={!canDelete?'Requires CONTROL_OFFICE/ADMIN':''}>{bulkDeleting?'Deleting…':`Delete Selected (${selectedIds.size})`}</button>
+        {!canDelete && <span style={{fontSize:11, color:'#7a1a1a'}}>Requires CONTROL_OFFICE/ADMIN</span>}
+      </div>
+      {filteredPlans.length>20 && visible.length===20 && filteredPlans.filter(p=>p.status==='DRAFT').length>20 && (
+        <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:6}}>Showing 20 of {filteredPlans.length} {filterStatus!=='All'?filterStatus:''}. <button onClick={selectAll43} className="btn btn-ghost btn-sm" style={{padding:'2px 6px', fontSize:11}}>Select all {filteredPlans.filter(p=>p.status==='DRAFT').length} DRAFT</button></div>
+      )}
+      {filteredPlans.length===0 ? <div className="empty-state">No plans — generate weekly/monthly/daily above.</div> :
       <div className="rb-table-wrap" style={{maxHeight:350}}>
         <table className="rb-table">
-          <thead><tr><th>Plan</th><th>Horizon</th><th>Status</th><th>Solver</th><th>Action</th></tr></thead>
-          <tbody>{plans.slice(0,20).map((p)=><tr key={p.plan_id} style={{background: p.status==='APPROVED'?'#e3f2fd': p.status==='UNDER_REVIEW'?'#fff3e0':'white'}}><td><span className="mono-pill" style={{fontSize:11}}>{p.plan_id}</span></td><td style={{whiteSpace:'nowrap', fontSize:12}}>{p.horizon_type} {formatDateKolkata(p.start_date)}→{formatDateKolkata(p.end_date)}</td><td><PlanStatus status={p.status} solver={p.solver_status} /></td><td><span className="mono" style={{fontSize:11}}>{p.solver_status}</span></td><td><button onClick={()=>loadPlan(p.plan_id)} className="btn btn-ghost btn-sm">View</button></td></tr>)}</tbody>
+          <thead><tr><th style={{width:34}}><input type="checkbox" checked={allDraftSelected} onChange={()=> allDraftSelected ? clearAll() : selectAllDraft()} aria-label="Select all DRAFT visible" /></th><th>Plan</th><th>Horizon</th><th>Status</th><th>Solver</th><th>Action</th></tr></thead>
+          <tbody>{visible.map((p)=>{
+            const isDraft=p.status==='DRAFT'
+            const checked=selectedIds.has(p.plan_id)
+            return <tr key={p.plan_id} style={{background: p.status==='APPROVED'?'#e3f2fd': p.status==='UNDER_REVIEW'?'#fff3e0': checked?'#f0f7f7':'white'}}>
+              <td><input type="checkbox" checked={checked} disabled={!isDraft} onChange={()=>toggle(p.plan_id)} title={isDraft?'Select for bulk delete':'Only DRAFT can be deleted'} /></td>
+              <td><span className="mono-pill" style={{fontSize:11}}>{p.plan_id}</span></td>
+              <td style={{whiteSpace:'nowrap', fontSize:12}}>{p.horizon_type} {formatDateKolkata(p.start_date)}→{formatDateKolkata(p.end_date)}</td>
+              <td><PlanStatus status={p.status} solver={p.solver_status} /></td>
+              <td><span className="mono" style={{fontSize:11}}>{p.solver_status}</span></td>
+              <td style={{display:'flex',gap:4}}><button onClick={()=>loadPlan(p.plan_id)} className="btn btn-ghost btn-sm">View</button><button onClick={()=>handleDeleteSingle(p.plan_id)} disabled={!isDraft || !canDelete || deleting===p.plan_id} className="btn btn-sm" style={{background: isDraft && canDelete ? '#ffebee':'#f5f5f5', border:'1px solid #ffcdd2', color: isDraft && canDelete ? '#7a1a1a':'#999', fontWeight:600, fontSize:11, padding:'4px 8px'}} title={!canDelete?'Requires CONTROL_OFFICE/ADMIN': isDraft?'Delete this DRAFT':`Only DRAFT (current: ${p.status})`}>{deleting===p.plan_id?'…':'Delete'}</button></td>
+            </tr>
+          })}</tbody>
         </table>
-        {plans.length>20 && <div style={{fontSize:11, color:'var(--text-muted)', padding:'6px 10px', background:'#f8fafb', borderTop:'1px solid #eef2f6'}}>Showing 20 of {plans.length}</div>}
+        {filteredPlans.length>20 && <div style={{fontSize:11, color:'var(--text-muted)', padding:'6px 10px', background:'#f8fafb', borderTop:'1px solid #eef2f6'}}>Showing 20 of {filteredPlans.length}</div>}
       </div>}
     </Card>
     {selected && <div className="rb-card">
@@ -234,7 +357,7 @@ export default function Planner(){
         <Gantt blocks={(selected.blocks ?? []) as import('../types').Block[]} />
       </div>
       <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center'}}>
-        {selected.status==='DRAFT' && <><button onClick={submit} className="btn btn-amber">② Submit for Review</button> <button onClick={()=>selected.blocks?.[0] && editBlock(selected.blocks[0] as Block)} disabled={!selected.blocks?.length} className="btn btn-ghost btn-sm">Edit Draft (test)</button></>}
+        {selected.status==='DRAFT' && <><button onClick={submit} className="btn btn-amber">② Submit for Review</button> <button onClick={()=>selected.blocks?.[0] && editBlock(selected.blocks[0] as Block)} disabled={!selected.blocks?.length} className="btn btn-ghost btn-sm">Edit Draft (test)</button><button onClick={()=>handleDeleteSingle(selected.plan_id)} disabled={!canDelete || deleting===selected.plan_id} className="btn btn-sm" style={{background:'#ffebee', border:'1px solid #ffcdd2', color:'#7a1a1a', fontWeight:700}}>{deleting===selected.plan_id?'Deleting…':'Delete Draft'}</button></>}
         {selected.status==='UNDER_REVIEW' && <>
           <span style={{fontSize:12, fontWeight:600, color:'var(--text-primary)'}}>Approvals by every department:</span>
           <select value={approveDept} onChange={e=>setApproveDept(e.target.value)} className="rb-select" style={{height:32, fontSize:12}}>{(['CONTROL_OFFICE','ADMIN'] as const).map(r=> <option key={r} value={r}>{r}</option>)}</select>
