@@ -6,6 +6,22 @@ import concurrent.futures
 
 router = APIRouter()
 
+# Simple 5s cache for diagnostics to avoid polling storm on Render free + Vercel 30s interval
+_diag_cache: dict = {"ts": 0.0, "data": None}
+import time as _time
+def _cached_diag(max_age: float = 5.0):
+    now = _time.time()
+    if _diag_cache["data"] is not None and (now - _diag_cache["ts"]) < max_age:
+        return _diag_cache["data"]
+    try:
+        d = get_diagnostics()
+        _diag_cache["data"] = d
+        _diag_cache["ts"] = now
+        return d
+    except Exception as e:
+        # don't cache errors
+        raise
+
 def _fast_diag(reason: str = "pool busy"):
     """Fallback diagnostics without DB round-trip — reports correct DB type even when pool busy."""
     pg = is_postgres()
@@ -77,10 +93,10 @@ def health():
         except TypeError:
             executor.shutdown(wait=False)
 
-    # DB reachable — gather diagnostics directly (no inner thread; pool_timeout 10 allows burst, health DB check already passed)
+    # DB reachable — gather diagnostics with 5s cache (pool_timeout 10 allows burst, health DB check already passed)
     diag = None
     try:
-        diag = get_diagnostics()
+        diag = _cached_diag(5.0)
     except Exception as e:
         diag = _fast_diag(str(e)[:120])
         diag["error"] = str(e)[:200]
