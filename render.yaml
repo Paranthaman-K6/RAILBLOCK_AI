@@ -1,3 +1,4 @@
+# Render: backend-only (API). Frontend is on Vercel — VITE_API_URL=https://railblock-ai-up0g.onrender.com
 services:
   - type: web
     name: railblock-ai
