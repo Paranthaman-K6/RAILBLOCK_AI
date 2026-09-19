@@ -43,9 +43,6 @@ def _normalize_mysql_url(url: str) -> str:
     """Convert mysql:// to mysql+pymysql:// and strip ssl params to be handled via connect_args.
     Aiven requires SSL; we keep a flag and pass ssl via connect_args instead of URL query.
     """
-    original = url
-    # Detect SSL requirement from Aiven-style ssl-mode param
-    # We will strip it from URL and use ssl connect_args
     global _MYSQL_SSL_REQUIRED
     try:
         low = url.lower()
@@ -53,10 +50,8 @@ def _normalize_mysql_url(url: str) -> str:
             _MYSQL_SSL_REQUIRED = True
     except Exception:
         pass
-    # Convert scheme
     if url.startswith("mysql://"):
         url = "mysql+pymysql://" + url[len("mysql://"):]
-    # Strip ssl-mode / ssl_mode / ssl from query params (handled via connect_args)
     try:
         from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
         if "?" in url:
@@ -68,11 +63,9 @@ def _normalize_mysql_url(url: str) -> str:
                 if lk in ("ssl_mode", "sslmode", "ssl") and q[k][0].lower() in ("required", "require", "true", "1", "yes"):
                     q.pop(k)
                     changed = True
-                # Also strip generic ssl-ca etc handled separately
             if changed:
                 new_q = urlencode({k: v[0] if len(v)==1 else v for k,v in q.items()}, doseq=False)
                 url = urlunparse((p.scheme, p.netloc, p.path, p.params, new_q, p.fragment))
-                # remove trailing ? if empty
                 if url.endswith("?"):
                     url = url[:-1]
     except Exception:
@@ -81,23 +74,18 @@ def _normalize_mysql_url(url: str) -> str:
 
 _MYSQL_SSL_REQUIRED = False
 
-# Always use absolute Windows path when running locally, but allow DATABASE_URL override for Docker (/app/railblock.db)
-# For Docker, DATABASE_URL=sqlite:///./railblock.db will be resolved relative to WORKDIR /app -> /app/railblock.db
 _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{_default_db.replace(os.sep, '/')}")
 _raw_db_url = _normalize_postgres_url(_raw_db_url)
 _raw_db_url = _normalize_mysql_url(_raw_db_url)
 DATABASE_URL = _sanitize_postgres_url(_raw_db_url)
-# Ensure sslmode for Supabase/Render external Postgres (append if missing and is postgres)
 if _is_postgres_url(DATABASE_URL) and "sslmode=" not in DATABASE_URL:
     sep = "&" if "?" in DATABASE_URL else "?"
     DATABASE_URL = DATABASE_URL + f"{sep}sslmode=require"
-# Add connect_timeout for faster failover on Render (pooled 6543) if not present
 if _is_postgres_url(DATABASE_URL) and "connect_timeout" not in DATABASE_URL:
     sep = "&" if "?" in DATABASE_URL else "?"
     DATABASE_URL = DATABASE_URL + f"{sep}connect_timeout=5"
 
 def is_postgres() -> bool:
-    # Explicit DATABASE_MODE flag takes precedence; fallback to URL scheme
     try:
         from app.config import settings
         if getattr(settings, "database_mode", "sqlite").lower() in ("postgres", "postgresql", "pg"):
