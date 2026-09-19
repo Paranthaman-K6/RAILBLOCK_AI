@@ -45,7 +45,7 @@ def is_server_using_db():
         return False, f"Check failed: {e}"
 
 def reset(force=False):
-    from app.database import is_postgres
+    from app.database import is_postgres, is_mysql
     diag_before = get_diagnostics()
     locked, reason = is_server_using_db()
     if locked and not force:
@@ -61,7 +61,7 @@ def reset(force=False):
             print(f"WARNING (--force): {reason} - proceeding anyway.")
 
     print("Resetting RailBlock AI demo database...")
-    # Preserve schema, remove all demo data safely (postgres vs sqlite)
+    # Preserve schema, remove all demo data safely (postgres vs mysql vs sqlite)
     db = SessionLocal()
     try:
         tables = [
@@ -84,6 +84,34 @@ def reset(force=False):
                         db.execute(text(f'DELETE FROM {tbl}'))
                     except Exception:
                         pass
+                db.commit()
+        elif is_mysql():
+            # MySQL: disable FK checks, truncate, re-enable
+            try:
+                db.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+                for tbl in tables:
+                    try:
+                        db.execute(text(f"TRUNCATE TABLE {tbl}"))
+                    except Exception:
+                        try:
+                            db.execute(text(f"DELETE FROM {tbl}"))
+                        except Exception:
+                            pass
+                db.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+                db.commit()
+            except Exception as e:
+                print(f"MySQL truncate failed, trying DELETE: {e}")
+                try:
+                    db.rollback()
+                except:
+                    pass
+                db.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+                for tbl in reversed(tables):
+                    try:
+                        db.execute(text(f"DELETE FROM {tbl}"))
+                    except Exception:
+                        pass
+                db.execute(text("SET FOREIGN_KEY_CHECKS=1"))
                 db.commit()
         else:
             db.execute(text("PRAGMA foreign_keys=OFF"))
@@ -110,7 +138,7 @@ def reset(force=False):
         db.close()
 
     # Re-enable pragmas (sqlite only)
-    if not is_postgres():
+    if not is_postgres() and not is_mysql():
         try:
             with engine.connect() as conn:
                 conn.execute(text("PRAGMA foreign_keys=ON;"))

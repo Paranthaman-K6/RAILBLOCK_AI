@@ -2,21 +2,37 @@ import axios from 'axios'
 
 const _viteEnv = ((import.meta as unknown as { env?: Record<string, string> }).env) || (import.meta as unknown as { env: Record<string, string> }).env || {}
 const _rawBase: string = _viteEnv.VITE_API_URL ?? ''
-// Production fallback for Vercel split deployment: Render backend. Prevents silent localhost/empty misbake.
+// Production fallback for Vercel split deployment: Voroa backend (was Render). Prevents silent localhost/empty misbake.
 // Local dev uses vite proxy (VITE_API_URL empty → same-origin → proxy). On Vercel prod, dashboard must set VITE_API_URL.
-const RENDER_FALLBACK = 'https://railblock-ai-up0g.onrender.com'
+const RENDER_FALLBACK = 'https://railblock-ai.getvoroa.com'
+const LEGACY_RENDER_FALLBACK = 'https://railblock-ai-up0g.onrender.com'
 let _resolvedBase = _rawBase
+// Voroa single-image detection: same-origin is correct when hosted on getvoroa.com (SPA + API together)
+const _isVoroaHost = typeof window !== 'undefined' && window.location.hostname.includes('getvoroa.com')
+const _isVoroaBuild = !_isVoroaHost && import.meta.env.PROD && !_rawBase && !_viteEnv.VITE_API_URL && typeof window === 'undefined'
 if (import.meta.env.PROD && !_resolvedBase) {
-  // Empty in production on Vercel means env var not set — fall back to Render instead of same-origin 404
-  console.warn(`[RailBlock] VITE_API_URL empty in production — falling back to ${RENDER_FALLBACK}. Set VITE_API_URL in Vercel dashboard to suppress.`)
-  _resolvedBase = RENDER_FALLBACK
+  if (_isVoroaHost || _isVoroaBuild) {
+    // Single Docker image on Voroa — empty means same-origin (FastAPI serves /api + SPA)
+    console.log('[RailBlock] VITE_API_URL empty on Voroa/single-image — using same-origin')
+    _resolvedBase = ''
+  } else {
+    // Empty in production on Vercel means env var not set — fall back to Render instead of same-origin 404
+    console.warn(`[RailBlock] VITE_API_URL empty in production — falling back to ${RENDER_FALLBACK}. Set VITE_API_URL in Vercel dashboard to suppress.`)
+    _resolvedBase = RENDER_FALLBACK
+  }
 }
 if (_resolvedBase.includes('localhost')) {
-  const msg = `[RailBlock] VITE_API_URL contains localhost in production (${_resolvedBase}) — this will fail on Vercel. Use ${RENDER_FALLBACK}`
-  if (import.meta.env.PROD) console.error(msg)
-  else console.warn(msg)
-  // In production, auto-correct localhost to Render to avoid broken deploy
-  if (import.meta.env.PROD) _resolvedBase = RENDER_FALLBACK
+  if (_isVoroaHost) {
+    // On Voroa, localhost in build should be ignored — use same-origin
+    console.warn(`[RailBlock] VITE_API_URL contains localhost but running on Voroa — using same-origin`)
+    _resolvedBase = ''
+  } else {
+    const msg = `[RailBlock] VITE_API_URL contains localhost in production (${_resolvedBase}) — this will fail on Vercel. Use ${RENDER_FALLBACK}`
+    if (import.meta.env.PROD) console.error(msg)
+    else console.warn(msg)
+    // In production, auto-correct localhost to Render to avoid broken deploy
+    if (import.meta.env.PROD) _resolvedBase = RENDER_FALLBACK
+  }
 }
 // Strip trailing slashes so `${baseURL}/health` never becomes `//health`
 const _apiBase = _resolvedBase.replace(/\/+$/, '')
