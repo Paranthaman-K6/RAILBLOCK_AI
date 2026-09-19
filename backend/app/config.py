@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Phase 1a — Live connector feature flags (default OFF → synthetic prototype preserved)
     live_mode: bool = False
     live_sources: str = ""  # comma-separated allowlist, empty = all when live_mode true
-    database_mode: str = "sqlite"  # sqlite | postgres
+    database_mode: str = "sqlite"  # sqlite | postgres | mysql
     # Live source endpoints (optional, only used when live_mode true)
     tms_api_url: str = ""
     smms_api_url: str = ""
