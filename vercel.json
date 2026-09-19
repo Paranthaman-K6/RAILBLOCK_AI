@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
+  "installCommand": "pip install -r backend/requirements.txt",
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.11",
+      "includeFiles": "data/sample/**",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.py" },
+    { "source": "/health", "destination": "/api/index.py" },
+    { "source": "/docs", "destination": "/api/index.py" },
+    { "source": "/docs/(.*)", "destination": "/api/index.py" },
+    { "source": "/openapi.json", "destination": "/api/index.py" },
+    { "source": "/redoc", "destination": "/api/index.py" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "env": {
+    "DATABASE_URL": "sqlite:////tmp/railblock.db",
+    "DATABASE_MODE": "sqlite",
+    "PYTHONPATH": "/var/task/backend"
+  }
+}
