@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 import ErrorBoundary from './ErrorBoundary'
+import TopLoadingBar from './TopLoadingBar'
 
 type Props = {
   children: React.ReactNode
@@ -65,15 +66,17 @@ export default function Layout({ children }: Props) {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={handleToggle}
-        mobileOpen={mobileOpen}
-        onMobileClose={() => setMobileOpen(false)}
-      />
-      <div className="app-main">
-        <Topbar onBurger={() => setMobileOpen((o) => !o)} />
+    <>
+      <TopLoadingBar />
+      <div className="app-shell">
+        <Sidebar
+          collapsed={collapsed}
+          onToggle={handleToggle}
+          mobileOpen={mobileOpen}
+          onMobileClose={() => setMobileOpen(false)}
+        />
+        <div className="app-main">
+          <Topbar onBurger={() => setMobileOpen((o) => !o)} />
         <div className="prototype-banner">
           <strong>Synthetic prototype data — not for real railway operations.</strong> — Prototype uses synthetic demo data only.
         </div>
@@ -90,5 +93,6 @@ export default function Layout({ children }: Props) {
         </footer>
       </div>
     </div>
+    </>
   )
 }

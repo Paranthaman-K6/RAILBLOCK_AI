@@ -14,6 +14,7 @@ export default function Execution(){
   const [planStatus, setPlanStatus]=useState('')
   const [msg, setMsg]=useState('')
   const [err, setErr]=useState('')
+  const [executing, setExecuting]=useState<string | null>(null)
   const [dept, setDept]=useState<string>(()=> localStorage.getItem('department')||'ENGINEERING')
   useEffect(()=>{api.get('/api/plans').then(r=>setPlans(r.data as BlockPlan[]))},[])
   const loadBlocks=useCallback(async ()=>{
@@ -34,7 +35,12 @@ export default function Execution(){
     }catch{}
   }
   const execute=async (blk: Block, mode:'COMPLETED'|'PARTIALLY_COMPLETED'|'CANCELLED')=>{
+    if(executing) return
     setErr(''); setMsg('')
+    setExecuting(blk.block_id)
+    // optimistic: mark block as COMPLETED instantly for snappy UI
+    const prevBlocks = blocks
+    setBlocks(prev=> prev.map(b=> b.block_id===blk.block_id ? {...b, status: mode} : b))
     try{
       const getTaskId = (t: unknown)=> typeof t === 'string' ? t : ((t as { task_id?: string; id?: string })?.task_id || (t as { id?: string })?.id || '')
       const getDept = (t: unknown)=> typeof t === 'string' ? '' : ((t as { department?: string })?.department || '')
@@ -57,7 +63,11 @@ export default function Execution(){
       const data = r.data as { execution_id?:string; id?:string; code?: number }
       setMsg(`✓ ${dept}: ${mode} recorded ${data.execution_id || data.id||''} for ${blk.block_id} (${targetTasks.length} tasks) code ${data.code || 200}`)
       loadBlocks()
-    }catch(e:unknown){ setErr(formatError(e))}
+    }catch(e:unknown){ 
+      // revert on failure
+      setBlocks(prevBlocks)
+      setErr(formatError(e))
+    } finally { setExecuting(null) }
   }
 
   const doTestInvalid=async ()=>{

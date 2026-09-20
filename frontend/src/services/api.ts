@@ -41,12 +41,25 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Add department header from localStorage
+// Loading bar - start on request, end on response/error + other end options
+import { loadingBar } from '../components/TopLoadingBar'
 api.interceptors.request.use((config) => {
+  try{ loadingBar.start() }catch{}
   const dept = localStorage.getItem('department') || 'VIEWER'
   config.headers['X-Department'] = dept
   return config
 })
+api.interceptors.response.use((resp)=>{
+  try{ loadingBar.done() }catch{}
+  return resp
+}, (err)=>{
+  try{ loadingBar.done() }catch{}
+  return Promise.reject(err)
+})
+// Other end options: timeout, route change, manual
+// - timeout handled inside TopLoadingBar (8s safety)
+// - route change via popstate listener in component
+// - manual: call loadingBar.done() after optimistic updates
 
 export default api
 

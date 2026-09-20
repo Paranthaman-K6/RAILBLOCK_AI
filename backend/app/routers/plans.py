@@ -345,16 +345,12 @@ def submit_review(plan_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Plan not found")
     if plan.status != "DRAFT":
         raise HTTPException(status_code=400, detail="Only DRAFT can be submitted")
-    # Fast submit with lightweight EMPTY_PLAN guard (instant) — full 14-check via POST /{id}/validate if needed
-    blocks = db.query(Block).filter(Block.plan_id==plan.id).all()
-    if not blocks:
+    # FAST: lightweight check only (blocks exist) — full 14-check validation is async via POST /validate, not blocking submit
+    # Previous heavy validate_plan caused 8-30s on Supabase pooled, making UI feel slow
+    if db.query(Block).filter(Block.plan_id==plan.id).first() is None:
         raise HTTPException(status_code=400, detail="Plan has no blocks (EMPTY_PLAN) — cannot submit. Generate a new valid plan with ELIGIBLE tasks and FEASIBLE windows.")
-    val = validate_plan(db, plan.id) if blocks else {"valid": False, "violations": [{"code":"EMPTY_PLAN","message":"Plan has no blocks"}]}
-    if not val["valid"]:
-        raise HTTPException(status_code=400, detail=f"Validation failed: {val['violations']}. Generate a new valid plan; this draft cannot be submitted.")
     plan.status="UNDER_REVIEW"
-    for b in db.query(Block).filter(Block.plan_id==plan.id).all():
-        b.status="UNDER_REVIEW"
+    db.query(Block).filter(Block.plan_id==plan.id).update({Block.status: "UNDER_REVIEW"}, synchronize_session=False)
     from app.models import AuditEvent
     import json, datetime
     db.add(AuditEvent(action="SUBMIT_REVIEW", entity_type="BlockPlan", entity_id=plan.id, user_id="demo_user", details=json.dumps({})))

@@ -23,6 +23,8 @@ export default function Planner(){
   const [filterStatus, setFilterStatus]=useState<string>('All')
   const [deleting, setDeleting]=useState<string | null>(null)
   const [bulkDeleting, setBulkDeleting]=useState(false)
+  const [submitting, setSubmitting]=useState(false)
+  const [approving, setApproving]=useState(false)
 
   const dept = (()=>{ try{return localStorage.getItem('department')||'VIEWER'}catch{return 'VIEWER'}})()
   const canDelete = dept==='ADMIN' || dept==='CONTROL_OFFICE'
@@ -126,26 +128,32 @@ export default function Planner(){
     }
   }
   const submit=async ()=>{
-    if(!selected) return
+    if(!selected || submitting) return
     const pid = (selected.plan_id || '').toUpperCase()
     if(selected.status !== 'DRAFT'){
       setError(`Only DRAFT can be submitted (current: ${selected.status})`)
       return
     }
     setError('')
+    setSubmitting(true)
+    // optimistic update for instant feedback
+    const prevStatus = selected.status
+    setSelected(prev=> prev ? {...prev, status:'UNDER_REVIEW'} : prev)
     try{
       await api.post(`/api/plans/${pid}/submit-review`)
       await loadPlan(pid)
       await load()
     }catch(e:unknown){
+      // revert on failure
+      setSelected(prev=> prev ? {...prev, status:prevStatus} : prev)
       const msg = formatError(e as Error)
       const st = (e as { response?: { status?: number } })?.response?.status
       if(st===504) setError(`${msg} — submit validation busy; backend fallback is enabled (8s). Please retry.`)
       else setError(msg)
-    }
+    } finally { setSubmitting(false) }
   }
   const approve=async ()=>{
-    if(!selected) return
+    if(!selected || approving) return
     const pid = (selected.plan_id || '').toUpperCase()
     // client-side guard: empty plan cannot be approved (mirrors backend EMPTY_PLAN)
     if((selected.blocks?.length ?? 0)===0){
@@ -156,7 +164,11 @@ export default function Planner(){
       setError(`Plan ${pid} is VALIDATION_FAILED — cannot be approved. Generate a new valid plan and delete this draft.`)
       return
     }
+    setApproving(true)
+    const prevStatus = selected.status
+    setSelected(prev=> prev ? {...prev, status:'APPROVED'} : prev)
     try{ await api.post(`/api/plans/${pid}/approve`, {approver_id: approveDept.toLowerCase()+'_officer', approver_role: approveDept, reason: `Approved by ${approveDept}`}); await loadPlan(pid); await load()}catch(e:unknown){
+      setSelected(prev=> prev ? {...prev, status:prevStatus} : prev)
       const msg = formatError(e as Error)
       // Enhance EMPTY_PLAN guidance
       if(msg.includes('EMPTY_PLAN') || msg.includes('no blocks') || msg.includes('PLAN_NOT_VALIDATED')){
@@ -164,7 +176,7 @@ export default function Planner(){
       } else {
         setError(msg)
       }
-    }
+    } finally { setApproving(false) }
   }
   const reject=async ()=>{
     if(!selected) return
@@ -374,12 +386,12 @@ export default function Planner(){
         <Gantt blocks={(selected.blocks ?? []) as import('../types').Block[]} />
       </div>
       <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center'}}>
-        {selected.status==='DRAFT' && <><button onClick={submit} className="btn btn-amber">② Submit for Review</button> <button onClick={()=>selected.blocks?.[0] && editBlock(selected.blocks[0] as Block)} disabled={!selected.blocks?.length} className="btn btn-ghost btn-sm">Edit Draft (test)</button><button onClick={()=>handleDeleteSingle(selected.plan_id)} disabled={!canDelete || deleting===selected.plan_id} className="btn btn-sm" style={{background:'#ffebee', border:'1px solid #ffcdd2', color:'#7a1a1a', fontWeight:700}}>{deleting===selected.plan_id?'Deleting…':'Delete Draft'}</button></>}
+        {selected.status==='DRAFT' && <><button onClick={submit} disabled={submitting} className="btn btn-amber">{submitting ? 'Submitting…' : '② Submit for Review'}</button> <button onClick={()=>selected.blocks?.[0] && editBlock(selected.blocks[0] as Block)} disabled={!selected.blocks?.length || submitting} className="btn btn-ghost btn-sm">Edit Draft (test)</button><button onClick={()=>handleDeleteSingle(selected.plan_id)} disabled={!canDelete || deleting===selected.plan_id || submitting} className="btn btn-sm" style={{background:'#ffebee', border:'1px solid #ffcdd2', color:'#7a1a1a', fontWeight:700}}>{deleting===selected.plan_id?'Deleting…':'Delete Draft'}</button></>}
         {selected.status==='UNDER_REVIEW' && <>
           <span style={{fontSize:12, fontWeight:600, color:'var(--text-primary)'}}>Approvals by every department:</span>
-          <select value={approveDept} onChange={e=>setApproveDept(e.target.value)} className="rb-select" style={{height:32, fontSize:12}}>{(['CONTROL_OFFICE','ADMIN'] as const).map(r=> <option key={r} value={r}>{r}</option>)}</select>
-          <button onClick={approve} className="btn btn-blue">Approve as {approveDept}</button>
-          <button onClick={reject} className="btn btn-ghost">Reject</button>
+          <select value={approveDept} onChange={e=>setApproveDept(e.target.value)} disabled={approving} className="rb-select" style={{height:32, fontSize:12}}>{(['CONTROL_OFFICE','ADMIN'] as const).map(r=> <option key={r} value={r}>{r}</option>)}</select>
+          <button onClick={approve} disabled={approving} className="btn btn-blue">{approving ? 'Approving…' : `Approve as ${approveDept}`}</button>
+          <button onClick={reject} disabled={approving} className="btn btn-ghost">Reject</button>
           {selected.pending_departments && selected.pending_departments.length>0 && <span style={{fontSize:11, color:'#e65100'}}>Pending: {selected.pending_departments.join(', ')} → each dept must approve, or CONTROL_OFFICE final approves all</span>}
         </>}
         {selected.status==='APPROVED' && <span className="pill pill--blue" style={{padding:'6px 10px', borderRadius:4, fontSize:12, fontWeight:600}}>✓ Approved — immutable; use Revision to edit. Go to Execution to complete tasks per department.</span>}
