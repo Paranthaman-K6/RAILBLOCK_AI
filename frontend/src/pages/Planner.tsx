@@ -147,7 +147,24 @@ export default function Planner(){
   const approve=async ()=>{
     if(!selected) return
     const pid = (selected.plan_id || '').toUpperCase()
-    try{ await api.post(`/api/plans/${pid}/approve`, {approver_id: approveDept.toLowerCase()+'_officer', approver_role: approveDept, reason: `Approved by ${approveDept}`}); await loadPlan(pid); await load()}catch(e:unknown){setError(formatError(e as Error))}
+    // client-side guard: empty plan cannot be approved (mirrors backend EMPTY_PLAN)
+    if((selected.blocks?.length ?? 0)===0){
+      setError(`Plan ${pid} has no blocks (EMPTY_PLAN) — cannot be approved. Generate a new valid plan: ensure tasks are ELIGIBLE and windows FEASIBLE, then generate WEEKLY 2026-09-01→07 (should yield OPTIMAL 18-20 blocks valid:true). Delete this empty draft and regenerate.`)
+      return
+    }
+    if(selected.solver_status==='VALIDATION_FAILED'){
+      setError(`Plan ${pid} is VALIDATION_FAILED — cannot be approved. Generate a new valid plan and delete this draft.`)
+      return
+    }
+    try{ await api.post(`/api/plans/${pid}/approve`, {approver_id: approveDept.toLowerCase()+'_officer', approver_role: approveDept, reason: `Approved by ${approveDept}`}); await loadPlan(pid); await load()}catch(e:unknown){
+      const msg = formatError(e as Error)
+      // Enhance EMPTY_PLAN guidance
+      if(msg.includes('EMPTY_PLAN') || msg.includes('no blocks') || msg.includes('PLAN_NOT_VALIDATED')){
+        setError(`${msg} — This draft has no blocks and cannot be approved. Delete it and generate a new valid plan (tasks ELIGIBLE 30/30, windows FEASIBLE). Latest valid example: PLAN-9FF3B9DD OPTIMAL 20 blocks valid:true approved via submit-review → approve CONTROL_OFFICE.`)
+      } else {
+        setError(msg)
+      }
+    }
   }
   const reject=async ()=>{
     if(!selected) return

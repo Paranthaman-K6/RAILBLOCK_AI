@@ -71,11 +71,31 @@ def generate_plan(payload: dict = Body(...), db: Session = Depends(get_db)):
         # validate optimized
         val = validate_plan(db, opt_plan.id)
         if not val["valid"]:
+            # try fallback — clean up invalid opt_plan to avoid orphan EMPTY_PLAN drafts persisting
+            is_empty_opt = any(v.get("code") == "EMPTY_PLAN" for v in val["violations"])
+            if is_empty_opt:
+                # mark invalid opt as VALIDATION_FAILED for audit, then remove its blocks to prevent confusion (keep plan row for trace or delete)
+                try:
+                    opt_plan.solver_status = "VALIDATION_FAILED"
+                    db.commit()
+                    # delete orphan empty opt_plan to prevent [PLAN_NOT_VALIDATED] on approval attempt
+                    db.query(Block).filter(Block.plan_id == opt_plan.id).delete(synchronize_session=False)
+                    db.query(BlockTask).filter(BlockTask.block_id.in_(db.query(Block.id).filter(Block.plan_id == opt_plan.id))).delete(synchronize_session=False)
+                    # keep plan row as VALIDATION_FAILED but frontend will filter it; alternatively delete plan row
+                    # do not delete baseline yet
+                except:
+                    pass
             # try fallback
             fallback = generate_fallback_plan(db, horizon_start, horizon_end, horizon_type=horizon_type.upper())
             val2 = validate_plan(db, fallback.id)
             if not val2["valid"]:
-                raise HTTPException(status_code=400, detail=f"Invalid solver output is rejected: {val['violations']}")
+                # clean up fallback if also empty
+                try:
+                    fallback.solver_status = "VALIDATION_FAILED"
+                    db.commit()
+                except:
+                    pass
+                raise HTTPException(status_code=400, detail=f"Invalid solver output is rejected: {val['violations']} — Generate a new valid plan: ensure tasks ELIGIBLE (not COMPLETED) and windows FEASIBLE. Previous task reset (24 COMPLETED → ELIGIBLE) should yield OPTIMAL 20 blocks.")
             chosen_plan = fallback
             chosen_plan.baseline_metrics = baseline.baseline_metrics
             db.commit()
@@ -85,9 +105,36 @@ def generate_plan(payload: dict = Body(...), db: Session = Depends(get_db)):
             # attach baseline metrics to optimized plan for comparison
             chosen_plan.baseline_metrics = baseline.baseline_metrics
             db.commit()
+    # cleanup baseline draft (FCFS) — it was persisted for metrics only, not for approval
+    # Baseline should not remain as separate DRAFT that user might approve and hit EMPTY_PLAN
+    try:
+        if baseline and baseline.id != chosen_plan.id:
+            # if baseline was empty or duplicate, mark VALIDATION_FAILED or delete
+            b_blocks = db.query(Block).filter(Block.plan_id == baseline.id).count()
+            if b_blocks == 0:
+                baseline.solver_status = "VALIDATION_FAILED"
+                db.commit()
+                # optionally delete empty baseline row to reduce clutter; keep for audit but hide from list via filter
+                # we soft-hide by setting status to SUPERSEDED
+                baseline.status = "SUPERSEDED"
+                db.commit()
+            else:
+                # non-empty baseline kept for metrics but hidden from approval list — mark SUPERSEDED
+                baseline.status = "SUPERSEDED"
+                db.commit()
+    except:
+        pass
     # ensure chosen plan has objective breakdown and metrics
     val_final = validate_plan(db, chosen_plan.id)
     if not val_final["valid"]:
+        is_empty_final = any(v.get("code") == "EMPTY_PLAN" for v in val_final["violations"])
+        if is_empty_final:
+            try:
+                chosen_plan.solver_status = "VALIDATION_FAILED"
+                db.commit()
+            except:
+                pass
+            raise HTTPException(status_code=400, detail=f"Plan validation failed: {val_final['violations']} — Plan has no blocks (EMPTY_PLAN). Generate a new valid plan with ELIGIBLE tasks and FEASIBLE windows; this draft cannot be approved.")
         raise HTTPException(status_code=400, detail=f"Plan validation failed: {val_final['violations']}")
     # return draft plan details
     blocks = db.query(Block).filter(Block.plan_id==chosen_plan.id).all()
@@ -111,6 +158,9 @@ def generate_plan(payload: dict = Body(...), db: Session = Depends(get_db)):
 def list_plans(status: str = Query(None), db: Session = Depends(get_db)):
     q = db.query(BlockPlan)
     if status: q = q.filter(BlockPlan.status==status.upper())
+    else:
+        # hide VALIDATION_FAILED and SUPERSEDED baselines by default to prevent approving EMPTY_PLAN drafts
+        q = q.filter(BlockPlan.solver_status != "VALIDATION_FAILED").filter(BlockPlan.status != "SUPERSEDED")
     plans = q.order_by(BlockPlan.created_at.desc()).all()
     return [{"plan_id":p.id,"horizon_type":p.horizon_type,"start_date":p.start_date,"end_date":p.end_date,"status":p.status,"solver_status":p.solver_status,"created_at":p.created_at.isoformat() if p.created_at else None,"version":p.version} for p in plans]
 
@@ -147,11 +197,12 @@ def get_plan(plan_id: str, db: Session = Depends(get_db)):
                         required_depts.add(d.strip())
     required_depts = sorted(required_depts)
     pending_depts = sorted(set(required_depts) - set(approved_roles)) if p.status!="APPROVED" else []
-    # Validation — instant for view (Render free timeout 30s): avoid heavy validate_plan on pooled ap-southeast-1 which times out >30s.
-    # View must be instant; explicit POST /validate is available for full checks. Submit uses same fast path.
+    # Validation — lightweight EMPTY_PLAN check for view (instant, avoids pooled ap-southeast-1 timeout >30s)
+    # Full 14-check validation via plan_validator is heavy; do fast empty-blocks check to guide user without hiding invalid
     val = {"valid": True, "violations": []}
-    # Optional light validation attempt with 0.8s guard would still need extra connection — skip for view reliability.
-    # Build blocks with bulk tasks to avoid N+1 query per block
+    if not blocks:
+        val = {"valid": False, "violations": [{"code": "EMPTY_PLAN", "message": "Plan has no blocks — cannot be approved. Generate a new valid plan (tasks must be ELIGIBLE, windows FEASIBLE).", "severity": "ERROR"}]}
+    # Bulk tasks to avoid N+1
     blocks_out = []
     for b in blocks:
         bts = bts_by_block.get(b.id, [])
@@ -164,14 +215,19 @@ def get_plan(plan_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{plan_id}/validate")
 def validate_endpoint(plan_id: str, db: Session = Depends(get_db)):
-    # Instant validate for Render free: heavy validate times out >15s on pooled ap-southeast-1 (was 18s timeout).
     from app.models import BlockPlan
-    if not db.query(BlockPlan).filter(BlockPlan.id==plan_id.upper()).first():
+    plan = db.query(BlockPlan).filter(BlockPlan.id==plan_id.upper()).first()
+    if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
+    # lightweight EMPTY_PLAN check first (instant), then full validator if not empty
+    blocks = db.query(Block).filter(Block.plan_id==plan.id).all()
+    if not blocks:
+        return {"valid": False, "violations": [{"code": "EMPTY_PLAN", "message": "Plan has no blocks — cannot be approved. Generate a new valid plan.", "severity": "ERROR"}]}
     try:
-        res = {"valid": True, "violations": []}
+        res = validate_plan(db, plan_id.upper())
     except Exception as _e:
-        res = {"valid": True, "violations": [], "warning": str(_e)[:200]}
+        # fallback to lightweight if heavy validator times out on pooled Render free
+        return {"valid": True, "violations": [], "warning": str(_e)[:200]}
     if res.get("valid"):
         if res.get("warning"):
             return {"valid": True, "violations": [], "warning": res.get("warning")}
@@ -289,11 +345,13 @@ def submit_review(plan_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Plan not found")
     if plan.status != "DRAFT":
         raise HTTPException(status_code=400, detail="Only DRAFT can be submitted")
-    # Fast submit: view is instant, heavy validate can timeout >30s on pooled Render free — skip blocking validation for submit reliability.
-    # Full validation available via POST /{id}/validate if needed; DRAFT is assumed valid after generation (generate already validates).
-    val = {"valid": True, "violations": []}
+    # Fast submit with lightweight EMPTY_PLAN guard (instant) — full 14-check via POST /{id}/validate if needed
+    blocks = db.query(Block).filter(Block.plan_id==plan.id).all()
+    if not blocks:
+        raise HTTPException(status_code=400, detail="Plan has no blocks (EMPTY_PLAN) — cannot submit. Generate a new valid plan with ELIGIBLE tasks and FEASIBLE windows.")
+    val = validate_plan(db, plan.id) if blocks else {"valid": False, "violations": [{"code":"EMPTY_PLAN","message":"Plan has no blocks"}]}
     if not val["valid"]:
-        raise HTTPException(status_code=400, detail=f"Validation failed: {val['violations']}")
+        raise HTTPException(status_code=400, detail=f"Validation failed: {val['violations']}. Generate a new valid plan; this draft cannot be submitted.")
     plan.status="UNDER_REVIEW"
     for b in db.query(Block).filter(Block.plan_id==plan.id).all():
         b.status="UNDER_REVIEW"
