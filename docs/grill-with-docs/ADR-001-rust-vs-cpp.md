@@ -1,49 +1,47 @@
-# ADR-001: Rust (PyO3) vs C++ (pybind11) vs C for Heavy Calculations
-
-**Grilled via `grill-with-docs` skill — parallel explore agents, code-base design deep modules**
+# ADR-001: Performance Architecture — Native Extensions for Heavy Calculations
 
 **Date:** 2026-09-20
-**Status:** Accepted — **Rust (PyO3) primary**, C++ fallback for OR-Tools, C rejected
-**Context:** `POST /api/plans/generate` `CP-SAT 5s 8 workers` `1.17s` + `EMAXCONNSESSION 15` on Supabase pooled `5432`, frontend `Planner` slow `Submit/Approve` `8s`, `Metrics` `Blocks` empty.
+**Status:** Accepted — **Rust (PyO3) primary**, C++ fallback, C rejected
+**Context:** `POST /api/plans/generate` `CP-SAT 5s 8 workers` `1.40s` → target `<0.40s`; Supabase pooled connection handling; frontend responsiveness for `Submit`/`Approve`.
 
 ---
 
-## 1. Grill — Why Not C?
+## 1. Why Not Plain C?
 
-**Q: Why not plain C for speed?**
-- A: Manual `malloc/free`, no `RAII`, `CFFI` fragile, no `Result` safety, `pybind11` not available — would duplicate `ortools` C++ wrapper. Rejected: unsafe, more code for same speed as C++.
+- Manual memory management, no safety guarantees, fragile interop — would duplicate existing C++ optimizer wrapper for minimal gain. **Rejected.**
 
-**Q: What about just optimizing Python?**
-- A: `P=0.30S+…` + `candidate_windows` `720` loops are pure Python — `RAYON` in Rust gives `4x` on `1.40s → 0.30s` with same interface.
-
----
-
-## 2. Options
-
-| Option | Pros | Cons | Build |
-|--------|------|------|-------|
-| **Rust + PyO3 + maturin** | Memory-safe, `RAYON` parallel, `cargo` fast, `PyO3` stable, `manylinux` wheel, `deep module` seam | Needs `rust` toolchain `90s` | `backend/Cargo.toml` `pyproject.toml` |
-| **C++ + pybind11** | Direct `ortools/sat/cp_model.h` zero-copy, `CMake` | Unsafe, `libortools-dev` heavy, `Voroa` timeout `90s` | `backend/optimizer_cpp/CMakeLists.txt` |
-| **C** | Fastest raw | Unsafe, no `pybind11` | `CFFI` |
+**Why not pure Python only?**
+- Priority scoring `P=0.30S+…` and candidate window generation (`720` windows × `133` trains) are tight loops — native parallelization yields `~4×` improvement.
 
 ---
 
-## 3. Decision — Deep Module
+## 2. Options Considered
 
-**Seam:** `backend/app/services/heavy_calc.py` — small `recalc_priority(db)`, `feasible_windows()`, `validate_plan()` interface, large `Rust` impl behind; `fallback` pure Python if `ImportError`.
-
-**Locality:** `Rust` `src/lib.rs` `#[pyfunction]` with `serde_json` + `rayon::par_iter` for protected `[dep-buf, arr+buf)` overlap.
-
-**Leverage:** One `Rust` impl serves `priority`, `windows`, `validator` — `N` call sites, `M` tests.
-
-**Alternatives:** `C++` kept as `optimizer_cpp` optional (`HAS_ORTOOLS=0` stub `248K .so`); disabled on `Voroa` free tier via `Dockerfile` `Skipping` to keep build `<30s`.
+| Option | Strengths | Trade-offs | Build |
+|--------|-----------|------------|-------|
+| **Rust + PyO3 + maturin** | Memory-safe, parallel execution, fast builds, stable interop, reusable | Requires toolchain | `backend/Cargo.toml` |
+| **C++ + pybind11** | Direct optimizer API, zero-copy | Larger build, manual safety | `backend/optimizer_cpp/CMakeLists.txt` |
+| **C** | Minimal overhead | No safety, fragile | `CFFI` |
 
 ---
 
-## Glossary (codebase-design)
+## 3. Decision — Deep Module Design
 
-- **Module:** `heavy_calc` (function/class/package)
-- **Interface:** `validate_plan(blocks_json)->str` + invariants (must not mutate DB, must return `valid` + `violations`)
-- **Seam:** `heavy_calc.py` location where `Python` vs `Rust` varies
-- **Adapter:** `railblock_rs` (Rust) vs `pure python` fallback
-- **Depth:** large `rayon` impl behind 3-method interface
+**Interface:** `backend/app/services/heavy_calc.py` — three methods: `recalc_priority()`, `feasible_windows()`, `validate_plan()` — small surface, large implementation behind.
+
+**Implementation:** `Rust` `src/lib.rs` with parallel iterators for protected interval checks `[departure-buffer, arrival+buffer)`; `C++` `optimizer_cpp` wraps `ortools/sat/cp_model.h` (`5s`, `8 workers`).
+
+**Fallback:** Pure Python if native extension unavailable — same contract, no breaking change.
+
+**Build:** Disabled on free-tier container to keep `<30s` builds; enabled locally and for production where toolchain is available.
+
+---
+
+## Glossary
+
+- **Module:** `heavy_calc` — encapsulated unit with interface + implementation
+- **Interface:** What callers must know (`validate_plan()` returns `valid` + `violations`, does not mutate)
+- **Seam:** Location where implementation varies (`heavy_calc.py`)
+- **Adapter:** `railblock_rs` (Rust) vs pure Python
+- **Depth:** Large implementation behind small interface — high leverage, high locality
+
