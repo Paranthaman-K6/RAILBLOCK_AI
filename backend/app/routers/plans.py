@@ -301,13 +301,16 @@ def changes_endpoint(plan_id: str, db: Session = Depends(get_db)):
 
 @router.get("/{plan_id}/export")
 def export_endpoint(plan_id: str, format: str = Query("csv"), db: Session = Depends(get_db)):
-    from app.services.export import export_plan_csv
-    from fastapi.responses import PlainTextResponse
+    from app.services.export import export_plan_csv, export_plan_pdf
+    from fastapi.responses import PlainTextResponse, Response
+    if format=="pdf":
+        pdf_bytes = export_plan_pdf(db, plan_id.upper())
+        if pdf_bytes is None:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={plan_id}.pdf"})
     csv_data = export_plan_csv(db, plan_id.upper())
     if csv_data is None:
         raise HTTPException(status_code=404, detail="Plan not found")
-    if format=="pdf":
-        return PlainTextResponse(csv_data, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={plan_id}.pdf"})
     return PlainTextResponse(csv_data, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={plan_id}.csv"})
 
 @router.post("/{plan_id}/revisions")
