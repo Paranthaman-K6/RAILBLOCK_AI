@@ -281,6 +281,7 @@ from app.routers.conflicts import router as conflict_router
 from app.routers.metrics import router as metrics_router
 from app.routers.optimizer import router as optimizer_router
 from app.routers.corridors import router as corr_router
+from app.routers.postgres_export import router as postgres_export_router
 
 app.include_router(health_router)
 app.include_router(import_router)
@@ -292,6 +293,7 @@ app.include_router(exec_router)
 app.include_router(conflict_router)
 app.include_router(metrics_router)
 app.include_router(optimizer_router)
+app.include_router(postgres_export_router)
 # corr_router duplicates handled in tasks, but include for /api/corridors alias if not conflicting
 # app.include_router(corr_router)
 
