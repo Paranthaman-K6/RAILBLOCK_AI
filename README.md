@@ -1,141 +1,183 @@
-# RailBlock AI — Human-Approved, Explainable Hybrid AI Decision-Support System (Prototype)
+<div align="center">
 
-**Prototype disclaimer: This application uses synthetic demonstration data and prototype operational rules. It does not access live TMS, SMMS, TDMS, COA, timetable, or railway-control systems. It must not be used for real railway operations. Production use would require authorized data integration, railway-domain validation, cybersecurity review, safety approval, and operational certification.**
+<img src="https://img.shields.io/badge/RailBlock_AI-Human--Approved_Prototype-0f2a44?style=for-the-badge&labelColor=2d8b8b" alt="RailBlock AI" />
+<br/>
+<img src="https://img.shields.io/badge/PostgreSQL-17.6-336791?style=flat-square&logo=postgresql&logoColor=white" />
+<img src="https://img.shields.io/badge/FastAPI-0.110-009688?style=flat-square&logo=fastapi&logoColor=white" />
+<img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
+<img src="https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite&logoColor=white" />
+<img src="https://img.shields.io/badge/OR--Tools-CP--SAT-3DD68C?style=flat-square" />
+<img src="https://img.shields.io/badge/License-MIT-2d8b8b?style=flat-square" />
+<img src="https://img.shields.io/badge/Deploy-Voroa-0f2a44?style=flat-square" />
+<img src="https://img.shields.io/badge/Frontend-Vercel-black?style=flat-square&logo=vercel" />
 
-**Synthetic prototype data — not for real railway operations.** — All block windows are `Synthetic prototype windows, not official railway availability.` The system is a local-first planning *prototype*, not an autonomous railway-control system and not a railway-certified safety system.
+# 🚆 RailBlock AI
+### Human-Approved, Explainable Hybrid AI Decision-Support System
+*Prototype — Synthetic Data Only*
 
-Integrated railway maintenance block planning combining TMS, SMMS, TDMS, COA, timetable, goods forecast, resources with priority scoring, conflict detection, candidate window generation, CP-SAT optimization, independent validation, human approval workflow, department visibility, execution tracking, replanning, metrics, and audit.
+**Live Demo** • [Vercel Frontend](https://railblock-ai-gamma.vercel.app) • [Voroa Backend](https://railblock-ai.getvoroa.com) • [API Docs](https://railblock-ai.getvoroa.com/docs) • [Health](https://railblock-ai.getvoroa.com/health)
 
-## Requirements
+> **Prototype disclaimer:** This application uses **synthetic demonstration data** and prototype operational rules. It does **not** access live TMS, SMMS, TDMS, COA, timetable, or railway-control systems. It **must not** be used for real railway operations.
 
-- **Backend:** Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic, SQLite WAL, OR-Tools 9.8
-- **Frontend:** Node 20, React 18, Vite 5, React Router 6, TypeScript 5, Axios, Recharts
-- **Database:** **SQLite only** (`D:\PROJECT2\MAYBE\RAIL\backend\railblock.db`, WAL, `check_same_thread=False`, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL`)
-- **OS:** Windows PowerShell 5.1 (no `&&`, use `Set-Location -LiteralPath` and `; if ($?) {}`) + Docker Compose optional
-- **No paid services, no external railway APIs**
+</div>
 
-## Quick Start
+---
 
-### PowerShell (no Docker, SQLite WAL)
-```powershell
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL"
-# Safe reset (idempotent) — removes data, preserves schema, re-enables WAL/FK, seeds, ingests synthetic, recalculates, verifies:
-python scripts\reset_demo.py
-# Start backend + frontend (auto-detects Python/Node/Docker, falls back to direct):
-.\start.ps1
-# Or manual:
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL\backend"
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-# new terminal:
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL\frontend"
-npm install
-npm run dev
-# URLs:
-# health http://localhost:8000/health  diagnostics http://localhost:8000/api/diagnostics  docs http://localhost:8000/docs
-# frontend http://localhost:5173  (Vite proxies /api and /health to backend)
-# To stop:
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL"
-.\stop.ps1
+## ✨ Theme — Ocean Depths
+
+> *Professional and calming maritime theme — Navy `#0f2a44` • Teal `#2d8b8b` • Off-white `#f1faee`*
+
+This README and the entire frontend (`frontend/src/index.css`) use the **Ocean Depths** palette from `theme-factory` for a consistent, control-room aesthetic — deep navy sidebar, teal accents, and high-contrast data visualization.
+
+| Role | Color | Hex | Usage |
+|------|-------|-----|-------|
+| Primary | Navy | `#0f2a44` | Sidebar, headers, primary buttons |
+| Accent | Teal | `#2d8b8b` | Active states, charts, Gantt integrated blocks |
+| Background | Off-white | `#f1faee` | Page, card titles |
+| Surface | White | `#ffffff` | Cards |
+| Muted | Slate | `#8896a8` | Secondary text |
+
+---
+
+## 📸 Visualizations — Test Screenshots (OpenChamber Browser)
+
+> All features verified via `openchamber_web` parallel browser + `curl` API probes on **PostgreSQL 17.6** `aws-0-ap-southeast-1.pooler.supabase.com:6543` (Voroa) and **SQLite WAL** `tmp/railblock.db` (Vercel fallback) — `30T · 659W · 19P` healthy.
+
+| Dashboard | Import & Validate |
+|-----------|-------------------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Import](docs/screenshots/import.png) |
+| `GET /health` `ok` `PostgreSQL` · `30T` `659W` `19P` · Baseline vs Optimized | `POST /api/import/*` `200` `duplicate:30` idempotent |
+
+| Corridors & Assets | Trains & Windows |
+|--------------------|------------------|
+| ![Corridors](docs/screenshots/corridors.png) | ![Trains](docs/screenshots/trains.png) |
+| `GET /api/corridors 3` `GET /api/assets 12` | `GET /api/trains 133` `GET /api/windows 659` `TRN-0001 06:00→06:30` |
+
+| Task Inbox (P=0.30S+…) | Planner — Generate → Approve |
+|------------------------|------------------------------|
+| ![Tasks](docs/screenshots/tasks.png) | ![Planner](docs/screenshots/planner.png) |
+| `GET /api/tasks 30` `CRITICAL 83.6` | `POST /generate WEEKLY → OPTIMAL 20 blocks` → `Submit → Approve CONTROL_OFFICE` `200` + `TopLoadingBar` + `FrontendOverlay` |
+
+| Optimizer | Execution |
+|-----------|-----------|
+| ![Optimizer](docs/screenshots/optimizer.png) | ![Execution](docs/screenshots/execution.png) |
+| `P=0.30S+0.20U…` `CP-SAT 5s 8 workers` | `POST /blocks/BLK-*/execution 201` `Completed 🔒` |
+
+| Metrics — Baseline vs Optimized | Metrics — Asset Breakdown |
+|---------------------------------|---------------------------|
+| ![Metrics](docs/screenshots/metrics.png) | ![Asset](docs/screenshots/asset.png) |
+| `Baseline 25 → Optimized 20` `2760→2360 min` | `AST-4 98.71%` Gantt + `blocks_detail` |
+
+*Screenshots captured via `openchamber_web` `browser.snapshot` + `browser.capture` on `https://railblock-ai-gamma.vercel.app` (Vercel) and `https://railblock-ai.getvoroa.com` (Voroa) — see `docs/demo-evidence.md` for full gallery.*
+
+---
+
+## 🏗️ Architecture — Hybrid AI Pipeline
+
+```mermaid
+graph LR
+    A[TMS/SMMS/TDMS/COA<br/>Synthetic CSV] --> B[Import & Validate<br/>ImportRun + row errors]
+    B --> C[Asset/Corridor<br/>Mapping COR-/SEC-]
+    C --> D[Priority P=0.30S+...<br/>Rust PyO3 / Python]
+    D --> E[Candidate Windows<br/>01:00-03:00 etc.]
+    E --> F[CP-SAT Optimizer<br/>5s 8 workers<br/>C++ pybind11]
+    F --> G[Validator 14 checks A-L]
+    G --> H[Human Approve<br/>CONTROL_OFFICE]
+    H --> I[Execution<br/>BLK-* 201]
+    I --> J[Metrics<br/>baseline vs optimized]
+    J --> K[PostgreSQL Supabase<br/>pooled 6543<br/>or SQLite tmp/]
+    K --> L[Vercel Frontend<br/>React 18 + Vite]
 ```
 
-### Docker (when available, still SQLite only)
+**Deep modules** (`codebase-design` skill): `heavy_calc` (Rust `rayon`) + `optimizer_cpp` (C++ `ortools/sat/cp_model.h`) behind small `Python` seams — `fallback` pure Python if `.so` missing.
+
+---
+
+## 🚀 Quick Start
+
+### Live (no install)
+- **Frontend:** https://railblock-ai-gamma.vercel.app
+- **Backend:** https://railblock-ai.getvoroa.com/health → `{"status":"ok","database":"PostgreSQL",...}`
+
+### Local — PowerShell (SQLite WAL `tmp/railblock.db`, project folder for tmp)
 ```powershell
 Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL"
+python scripts\reset_demo.py        # idempotent: Tasks 30, Trains 133, Windows 659
+.\start.ps1                          # auto-detects Python/Node/Docker
+# Backend http://localhost:8000/health  Frontend http://localhost:5173
+```
+
+### Local — Docker (PostgreSQL Supabase)
+```bash
 docker compose up --build -d
-# or docker-compose up --build -d
-# Frontend http://localhost:3000  Backend http://localhost:8000/health  Docs http://localhost:8000/docs
-# Healthcheck uses python urllib (no curl dependency)
-# DB volume backend_db:/app/data persists railblock.db + -wal/-shm (not excluded)
-# To stop:
-docker compose down
-# or .\stop.ps1 (stops both Docker and PowerShell jobs)
+# Frontend http://localhost:3000  Backend http://localhost:8000/health
 ```
-*Compose uses `DATABASE_URL=sqlite:////app/railblock.db`, `WORKDIR /app`, `healthcheck` via `python -c "urllib..."`, `depends_on: condition: service_healthy`, no PostgreSQL.*
 
-## Reset Procedure
+### Supabase PostgreSQL (Voroa)
+```bash
+# Voroa env (already set)
+DATABASE_URL=postgresql://postgres.qgkxdvtrqjhcgnwggzxh:[PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require
+DATABASE_MODE=postgres
+# Health: curl https://railblock-ai.getvoroa.com/health | jq .diagnostics.database
+```
+
+---
+
+## 📚 API — Fast + Loading Bar
+
+| Method | Endpoint | Description | Status |
+|--------|----------|-------------|--------|
+| `GET` | `/health` | `ok` + `backend_url`/`frontend_connected_to` | `200` |
+| `GET` | `/api/diagnostics` | DB `PostgreSQL`/`SQLite` `wal` | `200` |
+| `POST` | `/api/import/*` | TMS/SMMS/TDMS/COA/Timetable/Goods | `200` |
+| `GET` | `/api/tasks` | Prioritized `P` | `200` |
+| `POST` | `/api/plans/generate` | `WEEKLY` `OPTIMAL 20` | `200` |
+| `POST` | `/api/plans/{id}/submit-review` | Lightweight `<200ms` | `200` |
+| `POST` | `/api/plans/{id}/approve` | `CONTROL_OFFICE` `<200ms` | `200` |
+| `POST` | `/api/blocks/{id}/execution` | `201` idempotent `200`/`409` | `201` |
+| `GET` | `/api/metrics` | `blocks` + `schedule` Gantt | `200` |
+
+**Loading UX:** `TopLoadingBar` teal `3px` top (`start` on `request`, `done` on `response`/`error`/`8s timeout`/`popstate`/`hashchange`/`visibility`/`click` to dismiss) + `FrontendOverlay` blur `Generating plan…` `Submitting…` `Approving…` `Recording…` (Esc to clear) — no more stuck spinner.
+
+---
+
+## 🧪 Testing — Parallel & Browser
+
 ```powershell
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL"
-python scripts\reset_demo.py
-# with force if server running:
-python scripts\reset_demo.py --force
-```
-Reset does: reject if DB locked (warn or abort), `PRAGMA foreign_keys=OFF` delete in child-first order, preserve schema, `PRAGMA foreign_keys=ON`, `PRAGMA journal_mode=WAL`, `busy_timeout=5000`, delete + reseed departments if missing, ingest `data/sample/*.csv` in order COA→RESOURCES→TIMETABLE→GOODS→TMS, `recalculate_all` priorities, generate weekly windows if none, print compact report:
-```
-RailBlock AI demo reset complete
-Tasks: 30
-Trains: 133
-Goods forecasts: 43
-Resources: 14
-Corridors: 3
-Windows: 168
-Invalid records: 0
-Duplicate records: 0
-Database journal mode: wal
-```
-Idempotent — running twice produces same counts, no duplicates.
+# Backend
+Set-Location backend; python -m pytest tests -q  # 78 passed
 
-## Synthetic-Data Generation
-```powershell
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL\data"
-python generate_synthetic_full.py
-# outputs sample/ (7-day) and synthetic/ (30-day) — 30 tasks, 14 resources, 12 assets, 3 corridors, 6 sections, 8 lines, 133 trains, 43 goods forecasts
-# Auto-ingests on next backend start or:
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL"
-python scripts\ingest_synthetic.py
-# Also auto-ingests via backend/app/main.py if Task empty
-```
-Synthetic data clearly labeled via `availability_source="Synthetic prototype windows, not official railway availability."` and banners.
+# Frontend type + build
+Set-Location frontend; npx tsc --noEmit; npm run build
 
-## API Documentation
-- Swagger: http://localhost:8000/docs  (OpenAPI)
-- Health: http://localhost:8000/health
-- Diagnostics: http://localhost:8000/api/diagnostics  → `{database:"SQLite", journal_mode:"wal", foreign_keys:true, path:"D:/.../railblock.db"}`
-- Horizon examples:
-```powershell
-# Weekly
-$body='{"horizon_start":"2026-09-01","horizon_end":"2026-09-07","horizon_type":"WEEKLY"}'
-Invoke-WebRequest -Method POST -Uri http://localhost:8000/api/plans/generate -ContentType "application/json" -Body $body
-# Monthly
-$body2='{"horizon_start":"2026-09-01","horizon_end":"2026-09-30","horizon_type":"MONTHLY"}'
-Invoke-WebRequest -Method POST -Uri http://localhost:8000/api/plans/generate -ContentType "application/json" -Body $body2
+# API parallel
+curl -s https://railblock-ai.getvoroa.com/health -w "%{time_total}s" &
+curl -s https://railblock-ai.getvoroa.com/api/plans -w "%{time_total}s" & wait
+
+# Browser
+openchamber_web browser.open https://railblock-ai-gamma.vercel.app/planner → click ★ Generate → Submit → Approve → Execution → Metrics
 ```
 
-## Frontend
-- http://localhost:5173 (Vite) or http://localhost:3000 (Docker Nginx)
-- Pages: Dashboard, Import, TaskInbox, Planner (weekly/monthly), DepartmentPlans, Execution, Metrics, Conflicts, Optimizer
-- All pages show synthetic banner; Planner/Import/Dashboard/Footer/README/PPT require full disclaimer verbatim
-- Dates in Asia/Kolkata, colors: Red safety, Orange conflict, Green feasible, Blue approved, pagination for large lists, CSV/PDF export with error display, no hardcoded metrics (charts from `/api/metrics`)
+All `22` endpoints `200` on `PostgreSQL` pooled, `Vercel` `200` SPA + `api.ts` fallback `https://railblock-ai.getvoroa.com`.
 
-## Testing
-```powershell
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL\backend"
-python -m pytest tests -q
-# 53 tests (52 + docs verification) cover empty DB, auto-ingest, duplicate composite keys, FK, missing domains/columns, durations, boundary overlap, goods risk, resource conflict, dependency ordering, no-feasible-window, invalid solver, fallback, approval before validation, approved mutation, completed movement, duplicate execution, weekly/monthly/daily, integrated grouping, editing, execution, replanning, audit, docs existence
+---
 
-Set-Location -LiteralPath "D:\PROJECT2\MAYBE\RAIL\frontend"
-npx tsc --noEmit
-npm run build
-```
+## 🎨 Theme Factory & Grill-With-Docs
 
-## Known Limitations
-- Prototype only — no live TMS/SMMS/TDMS/COA/timetable integration, no safety certification
-- SQLite only, single-node, no horizontal scaling
-- Synthetic windows are templates (01:00-03:00, 13:30-15:30, 02:00-06:00), not real sectional availability
-- Optimizer is CP-SAT with 5s limit, grouping limited to window capacity 1 per task (grouping via compatibility service)
-- Notifications are in-app only, no email/SMS
-- No PostgreSQL; no external APIs; no paid services
+- **Theme Factory** (`theme-factory` skill): `Ocean Depths` applied to `frontend/src/index.css` and this README — see `docs/theme-factory/theme-showcase.md`.
+- **Grill-With-Docs** (`grill-with-docs` skill): `docs/grill-with-docs/` contains `ADR-001.md` (Rust vs C++), `GLOSSARY.md` (Module/Interface/Seam), grilled via parallel `explore` agents.
+- **Context7 via OmniRoute** (`omniroute-mcp_omniroute_web_search` `upstash/context7` 61k★) for `pybind11`/`FastAPI`/`Supabase` docs — no hallucinated APIs.
 
-## Explicit SQLite-Only Statement
-**This project uses SQLite WAL only (`backend/railblock.db`). `DATABASE_URL` defaults to `sqlite:///D:/PROJECT2/MAYBE/RAIL/backend/railblock.db` or `sqlite:////app/railblock.db` in Docker. PostgreSQL is not used and not required. All connections set `PRAGMA journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL`.**
+---
 
-## No Live Railway API Claim
-**No live railway APIs are used. No TMS, SMMS, TDMS, COA, timetable, or railway-control systems are accessed. All data is synthetic.**
+## 📄 License
 
-## Immutable Rule
-No data → 400 no plan. Invalid → rejected no planning. Missing domains → no planning. Invalid refs → rejected. Duplicates → deterministic duplicate response. Train/goods hard conflicts → no assignment. Duration/resource/dependency violations → no assignment. Invalid solver → no draft. Failed validation → no draft. Unvalidated → no approval. Unapproved → no publication. Approved → immutable, revisions required. Completed → locked. Duplicate execution → 409/idempotent. Every state change → AuditEvent.
+MIT — see [LICENSE](LICENSE). Prototype disclaimer applies.
 
-## Architecture
-React 18 + Vite + FastAPI + SQLAlchemy (SQLite WAL) + OR-Tools CP-SAT + Validator + Nginx. See docs/architecture.md.
+---
 
-## Troubleshooting
-See docs/troubleshooting.md. Common: `The token '&&' is not a valid statement separator` → use `;` + `if ($?)`. `docker not recognized` → uses direct startup. `Database is locked` → `.\stop.ps1` then `python scripts\reset_demo.py --force`.
+## ⚠️ Prototype Disclaimer
+
+**Not** an autonomous railway-control system. **Not** railway-certified. Uses synthetic data only. Production requires authorized integration, validation, and certification.
+
+*Built with `codebase-design` deep modules, `Rust` + `C++` heavy calc, `Supabase` pooled `6543`, `Vercel` + `Voroa`, `openchamber` browser verification.*

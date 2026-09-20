@@ -18,3 +18,19 @@ frontend/frontend.log
 *.db-shm
 *.db-wal
 *.db-journal
+# Rust/C++ build artifacts
+Cargo.lock
+target/
+uv.lock
+*.so
+*.pyd
+# IDE
+.vscode/
+.idea/
+# OS
+.DS_Store
+Thumbs.db
+# Vercel
+.vercel/
+# Logs
+*.log
