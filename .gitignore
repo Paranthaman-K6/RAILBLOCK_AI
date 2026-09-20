@@ -34,3 +34,4 @@ Thumbs.db
 .vercel/
 # Logs
 *.log
+.openchamber/
