@@ -14,21 +14,12 @@ RUN pip install --no-cache-dir pybind11 maturin 2>/dev/null || pip install --no-
 # Copy backend source — layout: WORKDIR /app and app/ is /app/app
 COPY backend/ ./
 
-# Optional C++ build (pybind11 + ortools, 5s 8 workers). Graceful fallback if ortools missing.
-# .so at top-level /app so `import optimizer_cpp` (C++ extension) does not shadow app.services.optimizer_cpp (adapter)
-RUN if [ -f optimizer_cpp/CMakeLists.txt ]; then \
-      echo "Building C++ optimizer_cpp..." && \
-      mkdir -p /tmp/cpp_build && cd /tmp/cpp_build && \
-      cmake /app/optimizer_cpp -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON 2>&1 | head -n 100 && \
-      make -j$(nproc) 2>&1 | tail -n 50 && \
-      cp optimizer_cpp*.so /app/ 2>/dev/null || cp *.so /app/ 2>/dev/null || echo "C++ .so copy to /app skipped"; \
-      ls -lh /app/*.so 2>/dev/null || true; \
-    else echo "No optimizer_cpp, skipping C++ build"; fi
-# Optional maturin (Rust) build — keep path, do not break if no Rust toolchain
-RUN if [ -f Cargo.toml ] && [ -f pyproject.toml ]; then \
-      echo "Attempting maturin build..." && maturin build --release 2>&1 | tail -n 30 || echo "maturin build skipped"; \
-      pip install dist/*.whl 2>/dev/null || pip install --no-cache-dir -e . 2>/dev/null || echo "maturin pip install skipped"; \
-    else echo "No Cargo/Rust, skipping maturin"; fi
+# Optional C++ build — disabled for Voroa free tier (heavy, 90s). Keep files for local, but skip in Docker to keep build fast.
+# Enable locally: docker build --build-arg BUILD_CPP=1 . To enable, uncomment below.
+# RUN if [ -f optimizer_cpp/CMakeLists.txt ]; then mkdir -p /tmp/cpp_build && cd /tmp/cpp_build && cmake /app/optimizer_cpp -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && cp *.so /app/ || true; fi
+RUN echo "Skipping C++ Rust builds on Voroa (keep deep module files, fallback pure python) — build fast"
+# Rust PyO3 also skipped on Voroa (needs rust toolchain, 90s). Local: cargo build + maturin
+# Files remain: backend/Cargo.toml, src/lib.rs, heavy_calc.py fallback handles has_rust=False
 
 # Copy synthetic data (kept for diagnostics, not auto-seeded at runtime)
 COPY data/ ./data
