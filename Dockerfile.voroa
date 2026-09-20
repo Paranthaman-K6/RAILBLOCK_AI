@@ -18,8 +18,6 @@ COPY backend/ ./
 COPY data/ ./data
 COPY --from=frontend-build /app/frontend/dist /app/static
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
-RUN mkdir -p /app/data /app/static /app/tmp && chmod -R 777 /app /app/data /app/static /app/tmp 2>/dev/null || true
-COPY tmp/ ./tmp 2>/dev/null || mkdir -p ./tmp
-RUN chmod 777 ./tmp 2>/dev/null || true
+RUN mkdir -p /app/data /app/static /app/tmp ./tmp && chmod -R 777 /app /app/data /app/static /app/tmp ./tmp 2>/dev/null || true
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

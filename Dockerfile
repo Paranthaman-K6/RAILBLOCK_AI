@@ -14,9 +14,7 @@ COPY backend/ ./
 COPY data/ ./data
 
 # Ensure writable for sqlite fallback (project folder tmp) and diagnostics — per user "use project folder for tmp"
-RUN mkdir -p /app/data /app/tmp && chmod 777 /app /app/data /app/tmp
-COPY tmp/ ./tmp 2>/dev/null || mkdir -p ./tmp
-RUN chmod 777 ./tmp 2>/dev/null || true
+RUN mkdir -p /app/data /app/tmp ./tmp && chmod 777 /app /app/data /app/tmp ./tmp 2>/dev/null || chmod 777 /app/tmp 2>/dev/null || true
 
 EXPOSE 8000
 
