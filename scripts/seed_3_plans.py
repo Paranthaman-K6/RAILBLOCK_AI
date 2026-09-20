@@ -5,10 +5,10 @@ Usage:
   python scripts/seed_3_plans.py
   python scripts/seed_3_plans.py --reset   # also re-ingests synthetic if tasks missing
 
-  # Postgres / Supabase psql (Render single-instance source of truth):
+   # Postgres / Supabase psql (Render single-instance source of truth):
   # Use pooled 6543 for Render, direct 5432 for local psql
-  # Set DATABASE_URL and DATABASE_MODE=postgres before running
-  export DATABASE_URL='postgresql://postgres.qgkxdvtrqjhcgnwggzxh:FicRBiXbXhOvJpRa@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require'
+  # Set DATABASE_URL and DATABASE_MODE=postgres before running (use <PASSWORD> placeholder, never commit real pwd)
+  export DATABASE_URL='postgresql://postgres.qgkxdvtrqjhcgnwggzxh:<PASSWORD>@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require'
   export DATABASE_MODE=postgres
   python scripts/seed_3_plans.py --reset
 

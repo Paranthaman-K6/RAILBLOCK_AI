@@ -66,6 +66,37 @@ def _sanitize_postgres_url(url: str) -> str:
     except Exception:
         return url
 
+def _redact_db_url(url: str) -> str:
+    """Redact password from DATABASE_URL for logging/diagnostics — never expose secrets."""
+    if not url or "://" not in url:
+        return url
+    if url.startswith("sqlite"):
+        return url  # sqlite has no credentials
+    try:
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(url)
+        netloc = p.netloc
+        if "@" in netloc:
+            creds, hostport = netloc.rsplit("@", 1)
+            if ":" in creds:
+                user, _pwd = creds.split(":", 1)
+                creds = f"{user}:***"
+            # else no password to redact
+            netloc = f"{creds}@{hostport}"
+        return urlunparse((p.scheme, netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        # Fallback: split on @
+        return url.split("@")[-1] if "@" in url else url
+
+# Frontend wiring — matches frontend/src/services/api.ts RENDER_FALLBACK (Vercel prod fallback)
+FRONTEND_BACKEND_URL = os.getenv("FRONTEND_BACKEND_URL") or os.getenv("VITE_API_URL") or "https://railblock-ai.getvoroa.com"
+RENDER_FALLBACK = "https://railblock-ai.getvoroa.com"
+
+# Circuit-breaker backoff for repeated auth failures (ECIRCUITBREAKER) — avoid hammering Supabase pooler
+_last_auth_failure_ts: float = 0.0
+_auth_failure_count: int = 0
+_AUTH_COOLDOWN_SEC = 30  # after password auth failure, suppress DB attempts for 30s to avoid ECIRCUITBREAKER
+
 def _is_postgres_url(url: Optional[str] = None) -> bool:
     u = url or DATABASE_URL or ""
     return u.startswith("postgresql")
@@ -161,6 +192,23 @@ if _is_postgres_url(DATABASE_URL) and "sslmode=" not in DATABASE_URL:
 if _is_postgres_url(DATABASE_URL) and "connect_timeout" not in DATABASE_URL:
     sep = "&" if "?" in DATABASE_URL else "?"
     DATABASE_URL = DATABASE_URL + f"{sep}connect_timeout=5"
+# Enforce pooled host for Supabase ap-southeast-1 (prevent direct host IPv6 unreachable + ECIRCUITBREAKER)
+# Pooled: postgres.qgkxdvtrqjhcgnwggzxh@aws-0-ap-southeast-1.pooler.supabase.com:6543 with sslmode=require
+# Direct: postgres@db.qgkxdvtrqjhcgnwggzxh.supabase.co:5432 fails on Render (Oregon) IPv6 + auth
+try:
+    if _is_postgres_url(DATABASE_URL):
+        _host_check = DATABASE_URL.lower()
+        if "db.qgkxdvtrqjhcgnwggzxh.supabase.co" in _host_check and "pooler.supabase.com" not in _host_check:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "DATABASE_URL uses direct host db.qgkxdvtrqjhcgnwggzxh.supabase.co — "
+                "use pooled aws-0-ap-southeast-1.pooler.supabase.com:6543 with user postgres.qgkxdvtrqjhcgnwggzxh to avoid IPv6 unreachable and ECIRCUITBREAKER"
+            )
+        if "pooler.supabase.com:5432" in _host_check:
+            import logging as _lg2
+            _lg2.getLogger(__name__).warning("DATABASE_URL uses pooler port 5432 — use 6543 for transaction pooler (Supavisor/pgbouncer) on Render")
+except Exception:
+    pass
 
 def is_postgres() -> bool:
     # Explicit DATABASE_MODE flag takes precedence; fallback to URL scheme
@@ -439,14 +487,17 @@ def get_diagnostics():
                 "journal_mode": "n/a (postgres)",
                 "foreign_keys": False,
                 "busy_timeout": 0,
-                "path": DATABASE_URL,
-                "database_url": DATABASE_URL,
+                "path": _redact_db_url(DATABASE_URL),
+                "database_url": _redact_db_url(DATABASE_URL),
                 "database_mode": "postgres",
                 "live_mode": live,
                 "live_sources": live_sources,
                 "server_version": "unknown — misconfigured",
                 "warning": "DATABASE_MODE=postgres but DATABASE_URL still sqlite — set DATABASE_URL=postgresql://... and restart. Running in degraded sqlite mode.",
                 "misconfigured": True,
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
         # Normal postgres: direct version query (pool_timeout 10 allows burst, health 4s < Render 5s)
         ver = "PostgreSQL"
@@ -480,12 +531,15 @@ def get_diagnostics():
                 "journal_mode": "n/a (postgres)",
                 "foreign_keys": True,
                 "busy_timeout": 0,
-                "path": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
-                "database_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
+                "path": _redact_db_url(DATABASE_URL),
+                "database_url": _redact_db_url(DATABASE_URL),
                 "database_mode": "postgres",
                 "live_mode": live,
                 "live_sources": live_sources,
                 "server_version": str(ver)[:120] if ver else "unknown",
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
             if warn:
                 diag["warning"] = warn
@@ -496,9 +550,12 @@ def get_diagnostics():
                 "database": "PostgreSQL",
                 "journal_mode": "n/a",
                 "foreign_keys": False,
-                "path": DATABASE_URL,
+                "path": _redact_db_url(DATABASE_URL),
                 "database_mode": "postgres",
                 "error": str(e),
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
     # MySQL diagnostics
     if is_mysql():
@@ -519,14 +576,17 @@ def get_diagnostics():
                 "journal_mode": "n/a (mysql)",
                 "foreign_keys": False,
                 "busy_timeout": 0,
-                "path": DATABASE_URL,
-                "database_url": DATABASE_URL,
+                "path": _redact_db_url(DATABASE_URL),
+                "database_url": _redact_db_url(DATABASE_URL),
                 "database_mode": "mysql",
                 "live_mode": live,
                 "live_sources": live_sources,
                 "server_version": "unknown — misconfigured",
                 "warning": "DATABASE_MODE=mysql but DATABASE_URL still sqlite — set DATABASE_URL=mysql://... and restart.",
                 "misconfigured": True,
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
         ver = "MySQL"
         try:
@@ -554,12 +614,15 @@ def get_diagnostics():
                 "journal_mode": "n/a (mysql)",
                 "foreign_keys": True,
                 "busy_timeout": 0,
-                "path": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
-                "database_url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
+                "path": _redact_db_url(DATABASE_URL),
+                "database_url": _redact_db_url(DATABASE_URL),
                 "database_mode": "mysql",
                 "live_mode": live,
                 "live_sources": live_sources,
                 "server_version": str(ver)[:120] if ver else "unknown",
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
             return diag
         except Exception as e:
@@ -567,9 +630,12 @@ def get_diagnostics():
                 "database": "MySQL",
                 "journal_mode": "n/a",
                 "foreign_keys": False,
-                "path": DATABASE_URL,
+                "path": _redact_db_url(DATABASE_URL),
                 "database_mode": "mysql",
                 "error": str(e),
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
     try:
         with engine.connect() as conn:
@@ -609,6 +675,9 @@ def get_diagnostics():
                 "busy_timeout": int(bt) if bt else 0,
                 "path": actual_fwd,
                 "database_url": DATABASE_URL,
+                "backend_url": RENDER_FALLBACK,
+                "frontend_connected_to": RENDER_FALLBACK,
+                "frontend_api_base": RENDER_FALLBACK,
             }
     except Exception as e:
         return {
@@ -617,4 +686,7 @@ def get_diagnostics():
             "foreign_keys": False,
             "path": _default_db.replace(os.sep, "/"),
             "error": str(e),
+            "backend_url": RENDER_FALLBACK,
+            "frontend_connected_to": RENDER_FALLBACK,
+            "frontend_api_base": RENDER_FALLBACK,
         }

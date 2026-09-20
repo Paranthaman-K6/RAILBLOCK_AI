@@ -64,7 +64,23 @@ if _is_vercel:
         if not _db_mode or _db_mode.lower() == "sqlite":
             os.environ.setdefault("DATABASE_MODE", "sqlite")
         # Ensure data path is resolvable
-        log.info(f"Vercel detected: DATABASE_MODE={os.getenv('DATABASE_MODE')} DATABASE_URL={os.getenv('DATABASE_URL')}")
+        # Never log raw DATABASE_URL (contains password) — redact
+        try:
+            from urllib.parse import urlparse, urlunparse
+            _r = os.getenv("DATABASE_URL","")
+            if "://" in _r and "@" in _r:
+                _p=urlparse(_r); _net=_p.netloc
+                if "@" in _net:
+                    _cr,_hp=_net.rsplit("@",1)
+                    if ":" in _cr:
+                        _u,_pw=_cr.split(":",1)
+                        _cr=f"{_u}:***"
+                    _net=f"{_cr}@{_hp}"
+                _r=urlunparse((_p.scheme,_net,_p.path,_p.params,_p.query,_p.fragment))
+            _redacted=_r
+        except Exception:
+            _redacted=os.getenv("DATABASE_URL","").split("@")[-1]
+        log.info(f"Vercel detected: DATABASE_MODE={os.getenv('DATABASE_MODE')} DATABASE_URL={_redacted}")
 
 # ---------------------------------------------------------------------------
 # Ensure backend is on sys.path (api/index.py -> project root -> backend)
@@ -90,11 +106,17 @@ try:
     log.info(f"App title: {app.title} version: {app.version}")
     if _is_vercel:
         try:
-            from app.database import get_database_mode, DATABASE_URL
+            from app.database import get_database_mode, DATABASE_URL, _redact_db_url  # type: ignore
 
-            log.info(f"Effective DB mode: {get_database_mode()} URL: {DATABASE_URL[:80]}")
-        except Exception as _e:
-            log.warning(f"Could not log DB mode: {_e}")
+            log.info(f"Effective DB mode: {get_database_mode()} URL: {_redact_db_url(DATABASE_URL)[:120]}")
+        except Exception:
+            try:
+                from app.database import get_database_mode, DATABASE_URL
+                # fallback redact
+                _ru=DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL
+                log.info(f"Effective DB mode: {get_database_mode()} URL: {_ru[:120]}")
+            except Exception as _e2:
+                log.warning(f"Could not log DB mode: {_e2}")
 
     # Export for Vercel
     __all__ = ["app", "handler"]
