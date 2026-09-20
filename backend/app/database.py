@@ -17,7 +17,30 @@ def _is_vercel() -> bool:
 
 
 _base_dir = os.path.dirname(os.path.abspath(__file__))
-_default_db = "/tmp/railblock.db" if _is_vercel() else os.path.abspath(os.path.join(_base_dir, "..", "railblock.db"))
+# Project folder for tmp — uses <project_root>/tmp/railblock.db instead of system /tmp or backend/railblock.db
+# per user request: "use project folder for tmp"
+_project_root = os.path.abspath(os.path.join(_base_dir, "..", ".."))
+_project_tmp_dir = os.path.join(_project_root, "tmp")
+_project_tmp_db = os.path.join(_project_tmp_dir, "railblock.db")
+# Ensure project tmp dir exists (writable on Voroa/local; on Vercel fallback to /tmp if not writable)
+try:
+    os.makedirs(_project_tmp_dir, exist_ok=True)
+except Exception:
+    pass
+if _is_vercel():
+    # On Vercel, /tmp is the only writable dir — prefer project tmp if writable, else /tmp
+    try:
+        _test_writable = os.access(_project_tmp_dir, os.W_OK)
+        if _test_writable and os.path.exists(_project_tmp_dir):
+            _default_db = _project_tmp_db
+        else:
+            _default_db = "/tmp/railblock.db"
+            _project_tmp_db = _default_db
+    except Exception:
+        _default_db = "/tmp/railblock.db"
+        _project_tmp_db = _default_db
+else:
+    _default_db = _project_tmp_db
 
 # Phase 1c — Database abstraction helpers (preserve SQLite default)
 def _normalize_postgres_url(url: str) -> str:
@@ -99,24 +122,37 @@ _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{_default_db.replace(os.sep,
 _raw_db_url = _normalize_postgres_url(_raw_db_url)
 _raw_db_url = _normalize_mysql_url(_raw_db_url)
 DATABASE_URL = _sanitize_postgres_url(_raw_db_url)
-# Vercel-aware SQLite fallback: Vercel's filesystem is read-only except /tmp.
-# When running on Vercel (VERCEL=1 or VERCEL_ENV/VERCEL_URL set) and DATABASE_URL
-# is still a sqlite path not already pointing at /tmp, rewrite to writable
-# sqlite:////tmp/railblock.db. Do NOT override postgres/mysql (DATABASE_MODE
-# or URL scheme indicates external DB).
-if _is_vercel() and DATABASE_URL.startswith("sqlite") and "/tmp" not in DATABASE_URL:
+# Vercel-aware SQLite fallback: use project folder tmp/railblock.db (per user: "use project folder for tmp")
+# When running on Vercel (VERCEL=1) and DATABASE_URL is still sqlite and not already pointing at project tmp or /tmp,
+# rewrite to project tmp if writable, else fallback to /tmp (only writable on Vercel Lambda).
+# Do NOT override postgres/mysql (DATABASE_MODE or URL scheme indicates external DB).
+if _is_vercel() and DATABASE_URL.startswith("sqlite") and _project_tmp_db not in DATABASE_URL and "/tmp" not in DATABASE_URL:
     # Respect explicit postgres/mysql mode — don't clobber external DB config
     _vercel_mode = os.getenv("DATABASE_MODE", "").lower()
     _is_external_mode = _vercel_mode in ("postgres", "postgresql", "pg", "mysql", "maria", "mariadb")
     # Also check URL scheme directly (covers postgres/mysql URLs)
     _is_external_url = DATABASE_URL.startswith("postgresql") or DATABASE_URL.startswith("postgres") or DATABASE_URL.startswith("mysql")
     if not _is_external_mode and not _is_external_url:
-        DATABASE_URL = "sqlite:////tmp/railblock.db"
-        _default_db = "/tmp/railblock.db"  # keep diagnostics path consistent
+        # Prefer project folder tmp if writable
         try:
-            os.makedirs("/tmp", exist_ok=True)
+            os.makedirs(_project_tmp_dir, exist_ok=True)
+            if os.access(_project_tmp_dir, os.W_OK):
+                DATABASE_URL = f"sqlite:///{_project_tmp_db.replace(os.sep, '/')}"
+                _default_db = _project_tmp_db
+            else:
+                DATABASE_URL = "sqlite:////tmp/railblock.db"
+                _default_db = "/tmp/railblock.db"
+                try:
+                    os.makedirs("/tmp", exist_ok=True)
+                except Exception:
+                    pass
         except Exception:
-            pass
+            DATABASE_URL = "sqlite:////tmp/railblock.db"
+            _default_db = "/tmp/railblock.db"
+            try:
+                os.makedirs("/tmp", exist_ok=True)
+            except Exception:
+                pass
 # Ensure sslmode for Supabase/Render external Postgres (append if missing and is postgres)
 if _is_postgres_url(DATABASE_URL) and "sslmode=" not in DATABASE_URL:
     sep = "&" if "?" in DATABASE_URL else "?"

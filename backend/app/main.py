@@ -29,9 +29,22 @@ except Exception as e:
         log.warning(f"init_db failed, attempting SQLite fallback: {e}")
         try:
             import os
+            import pathlib
             os.environ["DATABASE_MODE"] = "sqlite"
-            # ensure fallback URL is sqlite, not stale postgres/mysql URL
-            _fallback_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "railblock.db"))
+            # ensure fallback URL is sqlite, not stale postgres/mysql URL — use project folder tmp per user
+            _proj_root = pathlib.Path(__file__).resolve().parents[2]
+            _fallback_tmp = _proj_root / "tmp"
+            try:
+                _fallback_tmp.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            _fallback_db = str(_fallback_tmp / "railblock.db")
+            # Fallback to legacy backend/railblock.db if tmp not writable
+            try:
+                if not os.access(str(_fallback_tmp), os.W_OK):
+                    _fallback_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "railblock.db"))
+            except Exception:
+                pass
             os.environ["DATABASE_URL"] = f"sqlite:///{_fallback_db.replace(os.sep, '/')}"
             from app.database import get_engine
             get_engine.cache_clear() if hasattr(get_engine, "cache_clear") else None
@@ -153,6 +166,7 @@ app.add_middleware(
         "http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://127.0.0.1:3000",
         "https://railblock-ai-up0g.onrender.com",
         "https://railblock-ai.getvoroa.com",
+        "https://railblock-ai-gamma.vercel.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.getvoroa\.com|http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,

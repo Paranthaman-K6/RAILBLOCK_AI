@@ -1,6 +1,6 @@
-# RailBlock AI — Single Docker image (optional) — Frontend + Backend, manual MySQL pre-seed
+# RailBlock AI — Single Docker image (optional) — Frontend + Backend, postgres pooler + project tmp
 # For split deploy (current): Voroa = backend only (Dockerfile), Vercel = frontend
-# This file is kept as reference for single-image hosting (no auto-seed).
+# This file is kept as reference for single-image hosting (project folder tmp/railblock.db).
 FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
@@ -18,6 +18,8 @@ COPY backend/ ./
 COPY data/ ./data
 COPY --from=frontend-build /app/frontend/dist /app/static
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
-RUN mkdir -p /app/data /app/static && chmod -R 777 /app /app/data /app/static 2>/dev/null || true
+RUN mkdir -p /app/data /app/static /app/tmp && chmod -R 777 /app /app/data /app/static /app/tmp 2>/dev/null || true
+COPY tmp/ ./tmp 2>/dev/null || mkdir -p ./tmp
+RUN chmod 777 ./tmp 2>/dev/null || true
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

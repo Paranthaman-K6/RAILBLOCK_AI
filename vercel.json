@@ -20,7 +20,7 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "env": {
-    "DATABASE_URL": "sqlite:////tmp/railblock.db",
+    "DATABASE_URL": "sqlite:///./tmp/railblock.db",
     "DATABASE_MODE": "sqlite",
     "PYTHONPATH": "/var/task/backend"
   }

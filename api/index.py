@@ -36,11 +36,31 @@ if _is_vercel:
     _is_mysql = _db_mode.lower() in ("mysql", "maria", "mariadb") or _db_url.startswith("mysql://") or _db_url.startswith("mysql+pymysql://")
     # Only override for SQLite fallback; keep explicit PG/MySQL URLs intact
     if not _is_pg and not _is_mysql:
-        # Use /tmp which is writable on Vercel Lambda
-        _tmp_db = "sqlite:////tmp/railblock.db"
-        if not _db_url or _db_url.startswith("sqlite"):
-            os.environ["DATABASE_URL"] = _tmp_db
-            log.info(f"Vercel env: set DATABASE_URL={_tmp_db} (writable /tmp)")
+        # Use project folder tmp/railblock.db per user request "use project folder for tmp"
+        # Prefer project tmp if writable, else fallback to /tmp (only writable on Vercel Lambda)
+        _project_tmp_dir = str(pathlib.Path(__file__).resolve().parent.parent / "tmp")
+        _project_tmp_db = f"sqlite:///{_project_tmp_dir.replace(os.sep, '/')}/railblock.db"
+        # Normalise path for URL (use forward slashes, handle Windows)
+        _project_tmp_db = _project_tmp_db.replace("\\", "/").replace("//", "/").replace("sqlite:/", "sqlite:///")
+        # Ensure dir exists if possible
+        try:
+            pathlib.Path(_project_tmp_dir).mkdir(parents=True, exist_ok=True)
+            _use_project_tmp = pathlib.Path(_project_tmp_dir).exists() and os.access(_project_tmp_dir, os.W_OK)
+        except Exception:
+            _use_project_tmp = False
+        if _use_project_tmp:
+            _tmp_db = _project_tmp_db
+            # Fix sqlite:/// prefix for absolute path
+            if not _tmp_db.startswith("sqlite:////") and not _tmp_db.startswith("sqlite:///"):
+                _tmp_db = f"sqlite:///{_project_tmp_dir.replace(os.sep, '/')}/railblock.db"
+            if not _db_url or _db_url.startswith("sqlite"):
+                os.environ["DATABASE_URL"] = _tmp_db
+                log.info(f"Vercel env: set DATABASE_URL={_tmp_db} (project tmp)")
+        else:
+            _tmp_db = "sqlite:////tmp/railblock.db"
+            if not _db_url or _db_url.startswith("sqlite"):
+                os.environ["DATABASE_URL"] = _tmp_db
+                log.info(f"Vercel env: set DATABASE_URL={_tmp_db} (writable /tmp fallback)")
         if not _db_mode or _db_mode.lower() == "sqlite":
             os.environ.setdefault("DATABASE_MODE", "sqlite")
         # Ensure data path is resolvable

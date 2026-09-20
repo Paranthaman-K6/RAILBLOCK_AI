@@ -1,5 +1,5 @@
-# RailBlock AI — Backend for Voroa (MySQL Aiven) - manual one-time pre-seed
-# Frontend is on Vercel (VITE_API_URL -> Voroa URL). DB is pre-seeded manually before hosting.
+# RailBlock AI — Backend for Voroa (PostgreSQL Supabase pooler) - project folder tmp
+# Frontend is on Vercel (VITE_API_URL -> Voroa URL). DB is postgres pooled 6543; sqlite fallback uses <project>/tmp/railblock.db
 FROM python:3.11-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
@@ -13,8 +13,10 @@ COPY backend/ ./
 # Copy synthetic data (kept for diagnostics, not auto-seeded at runtime)
 COPY data/ ./data
 
-# Ensure writable for sqlite fallback and diagnostics
-RUN mkdir -p /app/data && chmod 777 /app /app/data
+# Ensure writable for sqlite fallback (project folder tmp) and diagnostics — per user "use project folder for tmp"
+RUN mkdir -p /app/data /app/tmp && chmod 777 /app /app/data /app/tmp
+COPY tmp/ ./tmp 2>/dev/null || mkdir -p ./tmp
+RUN chmod 777 ./tmp 2>/dev/null || true
 
 EXPOSE 8000
 

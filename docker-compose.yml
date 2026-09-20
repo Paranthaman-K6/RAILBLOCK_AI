@@ -5,10 +5,12 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      # Project folder for tmp per user — persist SQLite DB in tmp/railblock.db
+      - ./tmp:/app/tmp
       # Persist SQLite DB and WAL sidecars explicitly (do NOT exclude *.db-wal)
       - backend_db:/app/data
     environment:
-      - DATABASE_URL=sqlite:////app/railblock.db
+      - DATABASE_URL=sqlite:////app/tmp/railblock.db
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s

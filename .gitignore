@@ -8,6 +8,8 @@ venv/
 .env
 railblock.db
 backend/railblock.db
+tmp/
+tmp/**
 backend/backend.log
 frontend/frontend.log
 .backend_job

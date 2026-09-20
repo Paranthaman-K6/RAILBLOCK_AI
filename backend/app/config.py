@@ -1,16 +1,15 @@
 from pydantic_settings import BaseSettings
 import os
 
-# Vercel-aware SQLite fallback note:
-# - On Vercel (VERCEL=1 or VERCEL_ENV/VERCEL_URL set) the writable directory is only /tmp.
-# - app/database.py detects Vercel via _is_vercel() and rewrites sqlite DATABASE_URLs
-#   to sqlite:////tmp/railblock.db (and sets _default_db="/tmp/railblock.db").
-# - Settings.database_url intentionally keeps the local/Docker default
-#   sqlite:///./railblock.db; the Vercel override is applied centrally in database.py
+# Project folder tmp note (per user: "use project folder for tmp"):
+# - SQLite fallback uses <project_root>/tmp/railblock.db (project folder for tmp) instead of system /tmp
+# - app/database.py detects Vercel via _is_vercel() and prefers project tmp if writable, else /tmp
+# - Settings.database_url intentionally keeps the local/Docker default as project tmp
+#   sqlite:///./tmp/railblock.db; Vercel override is handled centrally in database.py
 #   so config stays simple and postgres/mysql modes are never clobbered.
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./railblock.db"  # default; Vercel override handled in database.py -> /tmp/railblock.db
+    database_url: str = "sqlite:///./tmp/railblock.db"  # default; project folder tmp per user request
     app_name: str = "RailBlock AI"
     timezone: str = "Asia/Kolkata"
     max_block_minutes: int = 240
