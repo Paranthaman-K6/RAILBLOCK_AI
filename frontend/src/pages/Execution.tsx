@@ -5,6 +5,7 @@ import { formatError } from '../services/errors'
 import { PrototypeDisclaimer } from '../components/WarningBanner'
 import { DEPARTMENTS } from '../constants/departments'
 import { minutesToTime } from '../services/formatters'
+import { overlay } from '../components/FrontendOverlay'
 import type { BlockPlan, Block } from '../types'
 
 export default function Execution(){
@@ -38,6 +39,7 @@ export default function Execution(){
     if(executing) return
     setErr(''); setMsg('')
     setExecuting(blk.block_id)
+    overlay.show(`Recording ${mode}…`, `${blk.block_id} — ${dept} — instant idempotent`)
     // optimistic: mark block as COMPLETED instantly for snappy UI
     const prevBlocks = blocks
     setBlocks(prev=> prev.map(b=> b.block_id===blk.block_id ? {...b, status: mode} : b))
@@ -67,7 +69,7 @@ export default function Execution(){
       // revert on failure
       setBlocks(prevBlocks)
       setErr(formatError(e))
-    } finally { setExecuting(null) }
+    } finally { setExecuting(null); overlay.hide() }
   }
 
   const doTestInvalid=async ()=>{

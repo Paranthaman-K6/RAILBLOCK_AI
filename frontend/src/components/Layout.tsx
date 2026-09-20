@@ -4,6 +4,7 @@ import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 import ErrorBoundary from './ErrorBoundary'
 import TopLoadingBar from './TopLoadingBar'
+import FrontendOverlay from './FrontendOverlay'
 
 type Props = {
   children: React.ReactNode
@@ -68,6 +69,7 @@ export default function Layout({ children }: Props) {
   return (
     <>
       <TopLoadingBar />
+      <FrontendOverlay />
       <div className="app-shell">
         <Sidebar
           collapsed={collapsed}

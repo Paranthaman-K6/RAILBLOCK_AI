@@ -8,6 +8,7 @@ import { formatError } from '../services/errors'
 import { PrototypeDisclaimer } from '../components/WarningBanner'
 import { formatDateKolkata, minutesToTime } from '../services/formatters'
 import { HORIZONS } from '../constants/horizons'
+import { overlay } from '../components/FrontendOverlay'
 import type { BlockPlan, Block } from '../types'
 
 export default function Planner(){
@@ -82,9 +83,10 @@ export default function Planner(){
     setSelectedIds(new Set(allDraft.map(p=>p.plan_id)))
   }
 
-   const generate=async ()=>{
+    const generate=async ()=>{
     setError('')
     setLoading(true)
+    overlay.show('Generating plan…', `CP-SAT · 5s · 8 workers · ${mode} ${horizonStart}→${horizonEnd} — please wait, overlay dismissible via click/Esc`)
     try{
       const r=await api.post('/api/plans/generate', {horizon_start:horizonStart, horizon_end:horizonEnd, horizon_type:mode})
       await load()
@@ -111,10 +113,11 @@ export default function Planner(){
       if(st===504) setError(`${msg} — generate validation busy, backend fallback should have succeeded; please retry.`)
       else setError(msg)
     }
-    finally{ setLoading(false)}
+    finally{ setLoading(false); overlay.hide() }
   }
   const loadPlan=async (id:string)=>{
     setError('')
+    overlay.show('Loading plan…', `Fetching ${id.toUpperCase()} — validation inclusive`)
     try{
       const pid = (id || '').toUpperCase()
       const r=await api.get(`/api/plans/${pid}`)
@@ -125,7 +128,7 @@ export default function Planner(){
       if(st===504) setError(`${msg} — validation timeout (pool busy). Backend now falls back to valid:true; please retry View.`)
       else if(st===500) setError(`${msg} — server error on view, check /health and retry.`)
       else setError(msg)
-    }
+    } finally { overlay.hide() }
   }
   const submit=async ()=>{
     if(!selected || submitting) return
@@ -136,6 +139,7 @@ export default function Planner(){
     }
     setError('')
     setSubmitting(true)
+    overlay.show('Submitting for review…', `${pid} — lightweight EMPTY_PLAN check, instant`)
     // optimistic update for instant feedback
     const prevStatus = selected.status
     setSelected(prev=> prev ? {...prev, status:'UNDER_REVIEW'} : prev)
@@ -150,7 +154,7 @@ export default function Planner(){
       const st = (e as { response?: { status?: number } })?.response?.status
       if(st===504) setError(`${msg} — submit validation busy; backend fallback is enabled (8s). Please retry.`)
       else setError(msg)
-    } finally { setSubmitting(false) }
+    } finally { setSubmitting(false); overlay.hide() }
   }
   const approve=async ()=>{
     if(!selected || approving) return
@@ -165,6 +169,7 @@ export default function Planner(){
       return
     }
     setApproving(true)
+    overlay.show('Approving plan…', `CONTROL_OFFICE ${pid} — instant EMPTY_PLAN guard`)
     const prevStatus = selected.status
     setSelected(prev=> prev ? {...prev, status:'APPROVED'} : prev)
     try{ await api.post(`/api/plans/${pid}/approve`, {approver_id: approveDept.toLowerCase()+'_officer', approver_role: approveDept, reason: `Approved by ${approveDept}`}); await loadPlan(pid); await load()}catch(e:unknown){
@@ -176,7 +181,7 @@ export default function Planner(){
       } else {
         setError(msg)
       }
-    } finally { setApproving(false) }
+    } finally { setApproving(false); overlay.hide() }
   }
   const reject=async ()=>{
     if(!selected) return
