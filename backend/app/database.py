@@ -284,12 +284,30 @@ def _base_connect_args():
         return {"check_same_thread": False}
     return {}
 
+def _is_pooled_supabase() -> bool:
+    """Detect Supabase pooled via Supavisor/pgbouncer (port 6543) — use lighter pooling."""
+    try:
+        return is_postgres() and ("pooler.supabase.com" in DATABASE_URL or ":6543" in DATABASE_URL)
+    except Exception:
+        return False
+
+# For Supabase pooled (pgbouncer), use NullPool or larger QueuePool to avoid double-pooling and QueuePool exhaustion
+# Pgbouncer already pools, so SQLAlchemy should not hold many connections. Use pool_size 10, overflow 20, timeout 30 for better concurrency.
+_pool_kwargs = {}
+if is_postgres() or is_mysql():
+    if _is_pooled_supabase():
+        # Supabase pooled: use larger pool to handle concurrent Vercel/Railway probes, or NullPool
+        # Use QueuePool with larger size for better concurrency under pool exhaustion seen in logs: QueuePool limit 5 overflow 10 reached
+        _pool_kwargs = {"pool_pre_ping": True, "pool_size": 10, "max_overflow": 20, "pool_recycle": 300, "pool_timeout": 30}
+    else:
+        _pool_kwargs = {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10}
+
+
 engine = create_engine(
     DATABASE_URL,
     connect_args=_base_connect_args(),
     echo=False,
-    # Postgres/MySQL production: pool pre-ping + sizing (Render free tuned, also for Aiven MySQL pool)
-    **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if is_postgres() or is_mysql() else {}),
+    **_pool_kwargs,
 )
 
 # Enable WAL, FK, busy_timeout for every new DBAPI connection (SQLite only)
@@ -347,11 +365,14 @@ def get_engine():
                 cargs = {}
             else:
                 cargs = {"check_same_thread": False} if "sqlite" in new_url and not want_pg else {}
+            # Use larger pool for Supabase pooled to avoid QueuePool limit 5 overflow 10 reached
+            _is_pooled = want_pg and ("pooler.supabase.com" in new_url or ":6543" in new_url)
+            _p_kwargs = {"pool_pre_ping": True, "pool_size": 10, "max_overflow": 20, "pool_recycle": 300, "pool_timeout": 30} if _is_pooled else ({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if (want_pg or want_mysql) else {})
             engine = _ce(
                 new_url,
                 connect_args=cargs,
                 echo=False,
-                **({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if (want_pg or want_mysql) else {}),
+                **_p_kwargs,
             )
             SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     except Exception:

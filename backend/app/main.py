@@ -60,44 +60,54 @@ except Exception as e:
 # --- Vercel SQLite fallback auto seeding — ensures all features workable without external DB ---
 # Uses app.services.synthetic_seeder (robust: CSV + programmatic fallback, Vercel /tmp handling,
 # candidate windows, recalculate priorities). Wrapped to not crash app if DB unreachable.
-# Import-time seeding for backwards compat (pre-lifespan) + lifespan startup + lazy middleware.
+# Skip for postgres/mysql to avoid QueuePool exhaustion on pooled Supabase (logs: QueuePool limit 5 overflow 10 reached)
 try:
-    from app.services.synthetic_seeder import ensure_synthetic_seeded, is_db_seeded
-    from app.database import SessionLocal as _SeedSessionLocal
-    _seed_db = _SeedSessionLocal()
-    try:
-        # Use get_seeding_status to decide if import-time seeding needed
-        from app.services.synthetic_seeder import get_seeding_status
-        _status = get_seeding_status(_seed_db)
-        # If tasks/windows missing, trigger full ensure (covers Vercel /tmp empty DB)
-        if _status.get("tasks", 0) == 0 or _status.get("windows", 0) == 0 or _status.get("corridors", 0) == 0:
-            log.info(f"Import-time seeding: status {_status} -> ensure_synthetic_seeded()")
-            # ensure_synthetic_seeded creates its own session if needed, but we pass existing for consistency
-            ensure_synthetic_seeded(_seed_db)
-        else:
-            log.debug(f"Import-time seeding skipped — already seeded: {_status}")
-    except Exception as _e:
-        log.warning(f"Import-time Vercel fallback seeding skipped: {_e}")
+    from app.database import is_postgres, is_mysql
+    _is_external = is_postgres() or is_mysql()
+    if _is_external:
+        log.info(f"Import-time seeding skipped for external DB (postgres/mysql) — seeding via lifespan/middleware or manual import")
+    else:
+        from app.services.synthetic_seeder import ensure_synthetic_seeded, is_db_seeded
+        from app.database import SessionLocal as _SeedSessionLocal
+        _seed_db = _SeedSessionLocal()
         try:
-            _seed_db.rollback()
-        except Exception:
-            pass
-    finally:
-        try:
-            _seed_db.close()
-        except Exception:
-            pass
+            # Use get_seeding_status to decide if import-time seeding needed
+            from app.services.synthetic_seeder import get_seeding_status
+            _status = get_seeding_status(_seed_db)
+            # If tasks/windows missing, trigger full ensure (covers Vercel /tmp empty DB)
+            if _status.get("tasks", 0) == 0 or _status.get("windows", 0) == 0 or _status.get("corridors", 0) == 0:
+                log.info(f"Import-time seeding: status {_status} -> ensure_synthetic_seeded()")
+                # ensure_synthetic_seeded creates its own session if needed, but we pass existing for consistency
+                ensure_synthetic_seeded(_seed_db)
+            else:
+                log.debug(f"Import-time seeding skipped — already seeded: {_status}")
+        except Exception as _e:
+            log.warning(f"Import-time Vercel fallback seeding skipped: {_e}")
+            try:
+                _seed_db.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                _seed_db.close()
+            except Exception:
+                pass
 except Exception as _se_import_err:
     log.warning(f"Synthetic seeder import failed (non-fatal): {_se_import_err}")
 
 # Lifespan for Vercel cold start + lazy fallback ensures DB always workable
+# For postgres/mysql, skip lifespan seeding to avoid QueuePool exhaustion (pooled Supabase already seeded via Composio)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: ensure synthetic data seeded (idempotent)
+    # Startup: ensure synthetic data seeded (idempotent) — skip for external DB to avoid pool timeout
     try:
-        from app.services.synthetic_seeder import ensure_synthetic_seeded as _ensure
-        _s = _ensure()
-        log.info(f"Lifespan startup seeding ensured: {_s}")
+        from app.database import is_postgres, is_mysql
+        if is_postgres() or is_mysql():
+            log.info(f"Lifespan seeding skipped for external DB (postgres/mysql) — DB already seeded via Supabase/Composio")
+        else:
+            from app.services.synthetic_seeder import ensure_synthetic_seeded as _ensure
+            _s = _ensure()
+            log.info(f"Lifespan startup seeding ensured: {_s}")
     except Exception as e:
         log.warning(f"Lifespan seeding skipped: {e}")
     yield
