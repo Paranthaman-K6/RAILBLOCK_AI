@@ -291,14 +291,14 @@ def _is_pooled_supabase() -> bool:
     except Exception:
         return False
 
-# For Supabase pooled (pgbouncer), use NullPool or larger QueuePool to avoid double-pooling and QueuePool exhaustion
-# Pgbouncer already pools, so SQLAlchemy should not hold many connections. Use pool_size 10, overflow 20, timeout 30 for better concurrency.
+# For Supabase pooled (Supavisor/pgbouncer), use SMALL pool to stay under Supabase session max 15
+# Previous QueuePool 5/10 was okay, but 10/20 exceeds Supabase 15 → EMAXCONNSESSION. Use 5/5 (total 10) or NullPool.
 _pool_kwargs = {}
 if is_postgres() or is_mysql():
     if _is_pooled_supabase():
-        # Supabase pooled: use larger pool to handle concurrent Vercel/Railway probes, or NullPool
-        # Use QueuePool with larger size for better concurrency under pool exhaustion seen in logs: QueuePool limit 5 overflow 10 reached
-        _pool_kwargs = {"pool_pre_ping": True, "pool_size": 10, "max_overflow": 20, "pool_recycle": 300, "pool_timeout": 30}
+        # Supabase pooled session mode max 15 → SQLAlchemy must stay well under (use 5/5 =10 total, timeout 10)
+        # Pgbouncer already pools, so SQLAlchemy should be conservative. Fixes EMAXCONNSESSION + previous QueuePool 5/10 reached.
+        _pool_kwargs = {"pool_pre_ping": True, "pool_size": 3, "max_overflow": 7, "pool_recycle": 300, "pool_timeout": 10}
     else:
         _pool_kwargs = {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10}
 
@@ -365,9 +365,9 @@ def get_engine():
                 cargs = {}
             else:
                 cargs = {"check_same_thread": False} if "sqlite" in new_url and not want_pg else {}
-            # Use larger pool for Supabase pooled to avoid QueuePool limit 5 overflow 10 reached
+            # Use small pool for Supabase pooled to stay under Supabase max 15 (fixes EMAXCONNSESSION)
             _is_pooled = want_pg and ("pooler.supabase.com" in new_url or ":6543" in new_url)
-            _p_kwargs = {"pool_pre_ping": True, "pool_size": 10, "max_overflow": 20, "pool_recycle": 300, "pool_timeout": 30} if _is_pooled else ({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if (want_pg or want_mysql) else {})
+            _p_kwargs = {"pool_pre_ping": True, "pool_size": 3, "max_overflow": 7, "pool_recycle": 300, "pool_timeout": 10} if _is_pooled else ({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10} if (want_pg or want_mysql) else {})
             engine = _ce(
                 new_url,
                 connect_args=cargs,
