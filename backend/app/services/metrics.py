@@ -113,6 +113,31 @@ def calculate_metrics(db: Session, plan_id: str):
         }
     except:
         improvement = {"blocks_reduced":0,"tasks_added":0,"minutes_reduced":0}
+     # Build blocks/schedule payload for Metrics detail (like Planner does) — DB-agnostic SQLite/Postgres pooled 6543
+    blocks_payload = []
+    for blk in blocks:
+        bts = bts_by_block.get(blk.id, [])
+        tasks_out = []
+        for bt in bts:
+            t = tasks_map.get(bt.task_id)
+            tasks_out.append({"task_id": bt.task_id, "status": bt.status, "department": t.department if t else None})
+        blocks_payload.append({
+            "block_id": blk.id,
+            "plan_id": blk.plan_id,
+            "window_id": blk.window_id,
+            "service_date": blk.service_date,
+            "start_time": blk.start_time,
+            "end_time": blk.end_time,
+            "corridor_id": blk.corridor_id,
+            "section_id": blk.section_id,
+            "line_id": blk.line_id,
+            "block_type": blk.block_type,
+            "requires_power_isolation": blk.requires_power_isolation,
+            "requires_signal_disconnection": blk.requires_signal_disconnection,
+            "status": blk.status,
+            "department": blk.department,
+            "tasks": tasks_out,
+        })
     # Also add comparison envelope required by spec
     dataset_label = "synthetic prototype"
     metrics = {
@@ -152,6 +177,12 @@ def calculate_metrics(db: Session, plan_id: str):
             "completion_rate": "completed blocks / scheduled blocks *100",
             "duration_variance": "actual - planned"
         },
+        # Blocks & Schedule detail for frontend Gantt/table — mirrors Planner GET /api/plans/{id} blocks shape
+        # Keep `blocks` as count for backward compat; provide array under explicit keys for frontend detail view
+        "blocks_detail": blocks_payload,
+        "blocks_list": blocks_payload,
+        "blocks_data": blocks_payload,
+        "schedule": blocks_payload,
     }
     return metrics
 

@@ -3,10 +3,11 @@ import api from '../services/api'
 import Card from '../components/Card'
 import MetricsChart from '../components/MetricsChart'
 import PlanStatus from '../components/PlanStatus'
+import Gantt from '../components/Gantt'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid } from 'recharts'
 import { PrototypeDisclaimer } from '../components/WarningBanner'
 import { formatError } from '../services/errors'
-import type { BlockPlan, MetricsData } from '../types'
+import type { BlockPlan, MetricsData, Block } from '../types'
 
 const PIE_COLORS = ['#4caf50', '#e0e6ed']
 
@@ -45,6 +46,23 @@ export default function Metrics(){
   const plannedActualData = useMemo(()=>{
     if(!selected?.planned_vs_actual?.length) return [{ name: 'Planned', planned: (selected as MetricsData)?.planned_duration_minutes||0, actual: (selected as MetricsData)?.actual_duration_minutes||0, variance: (selected as MetricsData)?.duration_variance_minutes||0 }]
     return (selected.planned_vs_actual as {block_id:string; planned:number; actual:number; delta:number}[]).slice(0,8).map((p)=>({ name: p.block_id.slice(0,8), planned: p.planned, actual: p.actual, variance: p.delta }))
+  }, [selected])
+
+  // Blocks & Schedule detail — backend now returns blocks[]/schedule[] like Planner (DB-agnostic SQLite/Postgres pooled).
+  // Prefer explicit detail keys, fallback to `blocks` if it is already an array (backward compat).
+  const blocksForGantt = useMemo(()=>{
+    if(!selected) return [] as Block[]
+    const s = selected as unknown as Record<string, unknown>
+    const candidates = [
+      s.blocks_detail, s.schedule, s.blocks_list, s.blocks_data, s.blocks_array,
+    ]
+    for(const c of candidates){
+      if(Array.isArray(c) && c.length) return c as unknown as Block[]
+      if(Array.isArray(c) && c.length===0) return [] as Block[]
+    }
+    // also handle `blocks` being array (some deployments)
+    if(Array.isArray(s.blocks)) return s.blocks as unknown as Block[]
+    return [] as Block[]
   }, [selected])
 
   return <div className="page-wrap">
@@ -176,6 +194,11 @@ export default function Metrics(){
           </ResponsiveContainer>
         </div>
         <pre className="mono" style={{fontSize:11, maxHeight:180, overflow:'auto', background:'#f8fafb', padding:10, border:'1px solid #eef2f6', borderRadius:4, marginTop:10, whiteSpace:'pre-wrap', wordBreak:'break-word'}}>{JSON.stringify(selected.planned_vs_actual, null,2)}</pre>
+      </Card>
+
+      <Card title={`Blocks & Schedule — Gantt (${blocksForGantt.length || selected.blocks || 0})`}>
+        <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:8}}>Blocks table + Gantt from metrics blocks[]/schedule[] (like Planner). Baseline {(selected.baseline as Record<string,number>)?.blocks ?? (selected.baseline_metrics as Record<string,number>)?.blocks ?? '—'} → Opt {(selected.optimized as Record<string,number>)?.blocks ?? selected.blocks} • Schedule: {blocksForGantt.length} rows • Dataset: {selected.dataset}</div>
+        {blocksForGantt.length ? <Gantt blocks={blocksForGantt} /> : <div className="empty-state">No blocks array — backend returns only counts. Ensure /api/metrics/{`{plan_id}`} includes blocks_detail/schedule. Counts: blocks {String(selected.blocks)} • baseline {(selected.baseline as Record<string,number>)?.blocks ?? '—'} → opt {String((selected.optimized as Record<string,number>)?.blocks ?? '')}</div>}
       </Card>
 
       <Card title="Validation">
